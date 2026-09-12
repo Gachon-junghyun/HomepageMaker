@@ -79,7 +79,7 @@
 | `C:\Users\fivep\GAMEMAKER` | 게임 제작소 | 골격(안내판·START_HERE·HANDOVER·SCHEMA)을 여기서 빌려 왔다 |
 | `C:\Users\fivep\DeGaJa_Agent` | 개인 비서 하네스 | 여기를 **안 담는다**. 포인터만 |
 
-⚠️ **git 이 아직 안 걸려 있다.** (`sites/` 안의 리포들은 각자 git 이 있다.)
+✅ **git 이 걸렸다** — https://github.com/Gachon-junghyun/HomepageMaker (2026-09-12). `sites/` 는 올라가지 않는다(각자 git 이 있고 남의 홈페이지다).
 
 ---
 
