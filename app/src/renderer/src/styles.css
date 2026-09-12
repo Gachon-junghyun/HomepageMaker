@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* 피그마 다크 UI 의 톤. 값은 피그마 실측이 아니라 그 «인상»이다 — 캔버스는 어둡고, 패널은 조금 밝고, 선택은 파랗다. */
+@theme {
+  --color-bg: #1e1e1e;
+  --color-canvas: #2c2c2c;
+  --color-panel: #252526;
+  --color-panel-2: #2d2d2d;
+  --color-line: #3c3c3c;
+  --color-fg: #d4d4d4;
+  --color-muted: #8b8b8b;
+  --color-accent: #0d99ff;
+  --color-accent-2: #0b7fd6;
+  --color-ok: #3fb950;
+  --color-warn: #f6b26b;
+  --color-err: #f24822;
+  --font-sans: "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", Consolas, "D2Coding", monospace;
+}
+
+html, body, #root { height: 100%; margin: 0; background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 12px; overflow: hidden; }
+* { box-sizing: border-box; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #4a4a4a; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.drag { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }
+
+input, select, textarea { background: var(--color-panel-2); color: var(--color-fg); border: 1px solid var(--color-line); border-radius: 4px; font: inherit; }
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--color-accent); border-color: var(--color-accent); }
+input[type="color"] { padding: 0; width: 22px; height: 22px; border-radius: 4px; cursor: pointer; }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
+input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
+
+webview { background: #fff; } /* 🔴 display 를 건드리지 마라 — Electron 이 내부적으로 flex 를 쓴다. block 으로 바꾸면 게스트가 150px 로 찌그러진다 (2026-09-12 실측) */

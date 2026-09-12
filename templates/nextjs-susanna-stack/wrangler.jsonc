@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // 🔴 배포 전에 워커 이름을 바꿔라. 시크릿은 여기 적지 말고 대시보드의 Secret 으로 넣는다 (배포마다 vars 는 덮어써진다).
+  "name": "new-homepage",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "vars": {}
+}

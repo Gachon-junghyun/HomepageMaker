@@ -1,0 +1,4 @@
+sites/
+app/node_modules/
+app/out/
+*.local.*

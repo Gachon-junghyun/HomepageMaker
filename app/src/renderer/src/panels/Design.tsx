@@ -1,0 +1,185 @@
+import { useState } from 'react'
+import { AlignLeft, AlignCenter, AlignRight, AlignJustify, RotateCcw, Sparkles, Check } from 'lucide-react'
+import type { StyleChange } from '@shared/types'
+import { askClaude, get, set, toast, useStore, wv } from '../store'
+import { Btn, Empty, IconBtn, Row, Section, isTransparent, num, toHex } from '../ui'
+
+/**
+ * 디자인 패널 — 피그마의 오른쪽 «Design» 탭. 값을 만지면 webview 에 «즉시» 먹고(인라인 style), 「코드에 적용」을 눌러야 소스가 바뀐다.
+ * 소스에서 유일하게 못 찾으면 안 고친다 — 대신 같은 변경을 Claude 에게 문장으로 넘긴다.
+ */
+export default function Design(): React.ReactNode {
+  const sel = useStore((s) => s.selection)
+  const live = useStore((s) => s.live)
+  const liveText = useStore((s) => s.liveText)
+  const project = useStore((s) => s.project)!
+  const [busy, setBusy] = useState(false)
+
+  if (!sel) return <Empty>캔버스에서 요소를 클릭하면 여기에 속성이 뜬다.<br /><br />· 클릭 = 선택, 같은 곳 재클릭 = 부모<br />· ↑↓←→ 로 트리 이동, Esc 해제<br />· Alt 누른 채 호버 = 거리 재기<br />· V = 선택 도구 켜고 끄기</Empty>
+
+  const val = (prop: string): string => live.find((c) => c.prop === prop)?.value ?? sel.computed[prop] ?? ''
+  const change = (prop: string, value: string): void => {
+    wv.send({ type: 'style', hmId: sel.hmId, prop, value })
+    set((s) => ({ live: [...s.live.filter((c) => c.prop !== prop), { prop, value }] }))
+  }
+  const px = (prop: string, v: number): void => change(prop, `${v}px`)
+  const dirty = live.length > 0 || (liveText !== null && liveText !== sel.text)
+
+  const revert = (): void => { wv.send({ type: 'unstyle', hmId: sel.hmId }); if (liveText !== null) wv.send({ type: 'text', hmId: sel.hmId, text: sel.text }); set({ live: [], liveText: null }); wv.send({ type: 'describe', hmId: sel.hmId }) }
+
+  const describeForClaude = (changes: StyleChange[]): string => {
+    const lines = changes.map((c) => `- ${c.prop}: ${c.value}`)
+    if (liveText !== null && liveText !== sel.text) lines.push(`- 글을 "${sel.text}" 에서 "${liveText}" 로`)
+    return `선택한 요소의 스타일을 아래처럼 바꿔라. Tailwind 클래스로 바꾸되 리포에 이미 토큰(@theme)이 있으면 그 이름을 써라. 다른 요소는 건드리지 마라.\n${lines.join('\n')}`
+  }
+
+  const apply = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const results: string[] = []
+      let failed = ''
+      if (live.length) {
+        const r = await window.hm.source.applyStyle(project.dir, sel.className, live, sel.text)
+        if (r.ok) results.push(`${r.file}:${r.line}`); else failed = r.reason
+      }
+      if (!failed && liveText !== null && liveText !== sel.text) {
+        const r = await window.hm.source.applyText(project.dir, sel.className, sel.text, liveText)
+        if (r.ok) results.push(`${r.file}:${r.line} (글)`); else failed = r.reason
+      }
+      if (failed) {
+        toast(failed, 'err')
+        return
+      }
+      wv.send({ type: 'unstyle', hmId: sel.hmId })
+      set((s) => ({ live: [], liveText: null, gitTick: s.gitTick + 1 }))
+      toast('코드에 적용: ' + results.join(', '))
+    } finally { setBusy(false) }
+  }
+
+  const toClaude = (): void => {
+    const changes = get().live
+    wv.send({ type: 'unstyle', hmId: sel.hmId })
+    void askClaude(describeForClaude(changes))
+    set({ live: [], liveText: null })
+  }
+
+  const bg = val('background-color')
+  const weight = val('font-weight')
+  const align = val('text-align')
+  const hasOwnText = sel.directText && !['img', 'svg', 'input', 'video'].includes(sel.tag)
+
+  return (
+    <div className="flex flex-col min-h-full">
+      {/* 머리: 무엇을 골랐나 */}
+      <div className="px-3 py-2 border-b border-line">
+        <div className="flex items-center gap-1 flex-wrap text-[11px]">
+          {sel.crumbs.slice(0, -1).map((c) => (
+            <button key={c.hmId} type="button" className="text-muted hover:text-fg cursor-pointer" onClick={() => wv.send({ type: 'select', hmId: c.hmId })}>{c.tag} ›</button>
+          ))}
+          <span className="font-semibold text-fg">{sel.tag}{sel.id ? '#' + sel.id : ''}</span>
+        </div>
+        {sel.components.length > 0 && <div className="mt-1 text-[11px] text-accent truncate" title={sel.components.join(' › ')}>{sel.components.join(' › ')}</div>}
+        <div className="mt-1 text-[10px] text-muted font-mono truncate" title={sel.className}>{sel.className || '(class 없음)'}</div>
+        <div className="mt-1 text-[10px] text-muted">{Math.round(sel.rect.w)} × {Math.round(sel.rect.h)} px</div>
+      </div>
+
+      {hasOwnText && (
+        <Section title="글">
+          <textarea className="w-full min-h-[52px] px-2 py-1 text-[12px] resize-y" value={liveText ?? sel.text}
+            onChange={(e) => { set({ liveText: e.target.value }); wv.send({ type: 'text', hmId: sel.hmId, text: e.target.value }) }} />
+        </Section>
+      )}
+
+      <Section title="글자">
+        <Row label="크기">
+          <input type="number" className="w-16 h-6 px-1" value={num(val('font-size'))} onChange={(e) => px('font-size', +e.target.value)} />
+          <select className="h-6 px-1 flex-1" value={/^\d+$/.test(weight) ? weight : '400'} onChange={(e) => change('font-weight', e.target.value)}>
+            {[['300', 'Light'], ['400', 'Regular'], ['500', 'Medium'], ['600', 'Semibold'], ['700', 'Bold'], ['800', 'Extrabold'], ['900', 'Black']].map(([v, l]) => <option key={v} value={v}>{l} {v}</option>)}
+          </select>
+        </Row>
+        <Row label="색">
+          <input type="color" value={toHex(val('color'))} onChange={(e) => change('color', e.target.value)} />
+          <input className="w-20 h-6 px-1 font-mono text-[11px]" value={toHex(val('color'))} onChange={(e) => /^#[0-9a-f]{6}$/i.test(e.target.value) && change('color', e.target.value)} />
+        </Row>
+        <Row label="줄간격">
+          <input type="number" className="w-16 h-6 px-1" value={num(val('line-height'))} onChange={(e) => px('line-height', +e.target.value)} />
+          <span className="text-muted text-[10px]">자간</span>
+          <input type="number" step="0.5" className="w-14 h-6 px-1" value={parseFloat(val('letter-spacing')) || 0} onChange={(e) => px('letter-spacing', +e.target.value)} />
+        </Row>
+        <Row label="정렬">
+          {([['left', <AlignLeft size={13} />], ['center', <AlignCenter size={13} />], ['right', <AlignRight size={13} />], ['justify', <AlignJustify size={13} />]] as const).map(([a, ic]) => (
+            <IconBtn key={a} active={align === a || (a === 'left' && align === 'start')} onClick={() => change('text-align', a)}>{ic}</IconBtn>
+          ))}
+        </Row>
+        <Row label="글꼴"><span className="text-[10px] text-muted truncate" title={val('font-family')}>{val('font-family').split(',')[0].replace(/"/g, '')}</span></Row>
+      </Section>
+
+      <Section title="채우기">
+        <Row label="배경">
+          <input type="color" value={isTransparent(bg) ? '#ffffff' : toHex(bg)} onChange={(e) => change('background-color', e.target.value)} />
+          <input className="w-20 h-6 px-1 font-mono text-[11px]" value={isTransparent(bg) ? '' : toHex(bg)} placeholder="없음" onChange={(e) => /^#[0-9a-f]{6}$/i.test(e.target.value) && change('background-color', e.target.value)} />
+          <Btn onClick={() => change('background-color', 'transparent')} title="배경 없애기">없음</Btn>
+        </Row>
+      </Section>
+
+      <Section title="간격">
+        <Row label="안쪽">{(['top', 'right', 'bottom', 'left'] as const).map((d) => <input key={d} type="number" title={'padding-' + d} className="w-12 h-6 px-1" value={num(val('padding-' + d))} onChange={(e) => px('padding-' + d, +e.target.value)} />)}</Row>
+        <Row label="바깥">{(['top', 'right', 'bottom', 'left'] as const).map((d) => <input key={d} type="number" title={'margin-' + d} className="w-12 h-6 px-1" value={num(val('margin-' + d))} onChange={(e) => px('margin-' + d, +e.target.value)} />)}</Row>
+        <div className="text-[10px] text-muted">순서: 위 · 오른쪽 · 아래 · 왼쪽 — 초록(안쪽)·주황(바깥)이 캔버스에 칠해진다</div>
+      </Section>
+
+      <Section title="배치">
+        <Row label="표시">
+          <select className="h-6 px-1 flex-1" value={val('display')} onChange={(e) => change('display', e.target.value)}>
+            {['block', 'flex', 'grid', 'inline-block', 'inline-flex', 'inline', 'none'].map((d) => <option key={d}>{d}</option>)}
+          </select>
+        </Row>
+        {/flex/.test(val('display')) && (
+          <>
+            <Row label="방향">
+              <select className="h-6 px-1 flex-1" value={val('flex-direction')} onChange={(e) => change('flex-direction', e.target.value)}>{['row', 'column', 'row-reverse', 'column-reverse'].map((d) => <option key={d}>{d}</option>)}</select>
+            </Row>
+            <Row label="주축">
+              <select className="h-6 px-1 flex-1" value={val('justify-content')} onChange={(e) => change('justify-content', e.target.value)}>{['normal', 'flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'].map((d) => <option key={d}>{d}</option>)}</select>
+            </Row>
+            <Row label="교차축">
+              <select className="h-6 px-1 flex-1" value={val('align-items')} onChange={(e) => change('align-items', e.target.value)}>{['normal', 'stretch', 'flex-start', 'center', 'flex-end', 'baseline'].map((d) => <option key={d}>{d}</option>)}</select>
+            </Row>
+          </>
+        )}
+        {/flex|grid/.test(val('display')) && <Row label="사이"><input type="number" className="w-16 h-6 px-1" value={num(val('gap'))} onChange={(e) => px('gap', +e.target.value)} /></Row>}
+        <Row label="크기">
+          <span className="text-muted text-[10px]">W</span><input type="number" className="w-16 h-6 px-1" value={num(val('width'))} onChange={(e) => px('width', +e.target.value)} />
+          <span className="text-muted text-[10px]">H</span><input type="number" className="w-16 h-6 px-1" value={num(val('height'))} onChange={(e) => px('height', +e.target.value)} />
+        </Row>
+      </Section>
+
+      <Section title="테두리">
+        <Row label="둥글기"><input type="number" className="w-16 h-6 px-1" value={num(val('border-radius'))} onChange={(e) => px('border-radius', +e.target.value)} /></Row>
+        <Row label="선">
+          <input type="number" className="w-12 h-6 px-1" value={num(val('border-width'))} onChange={(e) => { px('border-width', +e.target.value); if (+e.target.value > 0 && val('border-style') === 'none') change('border-style', 'solid') }} />
+          <input type="color" value={toHex(val('border-color'))} onChange={(e) => change('border-color', e.target.value)} />
+        </Row>
+      </Section>
+
+      <Section title="효과">
+        <Row label="투명도">
+          <input type="range" min={0} max={100} className="flex-1" value={Math.round((parseFloat(val('opacity')) || 1) * 100)} onChange={(e) => change('opacity', String(+e.target.value / 100))} />
+          <span className="text-[10px] w-8 text-right">{Math.round((parseFloat(val('opacity')) || 1) * 100)}%</span>
+        </Row>
+        <Row label="그림자">
+          <select className="h-6 px-1 flex-1" value={live.find((c) => c.prop === 'box-shadow')?.value ?? (val('box-shadow') === 'none' ? 'none' : '')} onChange={(e) => change('box-shadow', e.target.value)}>
+            <option value="none">없음</option><option value="sm">sm</option><option value="">기본</option><option value="md">md</option><option value="lg">lg</option><option value="xl">xl</option><option value="2xl">2xl</option>
+          </select>
+        </Row>
+      </Section>
+
+      {/* 아래 고정: 적용 */}
+      <div className="mt-auto sticky bottom-0 bg-panel border-t border-line p-2 flex gap-1.5 items-center">
+        <Btn onClick={revert} disabled={!dirty} title="라이브 변경 되돌리기"><RotateCcw size={13} /></Btn>
+        <Btn kind="primary" onClick={() => void apply()} disabled={!dirty || busy} className="flex-1 justify-center"><Check size={13} /> 코드에 적용</Btn>
+        <Btn kind="solid" onClick={toClaude} disabled={!dirty} title="같은 변경을 Claude 에게 문장으로 넘긴다 — 조건부 클래스라 자동 적용이 안 될 때"><Sparkles size={13} /> Claude</Btn>
+      </div>
+    </div>
+  )
+}
