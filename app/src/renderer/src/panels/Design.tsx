@@ -1,5 +1,9 @@
 import { useState } from 'react'
-import { AlignLeft, AlignCenter, AlignRight, AlignJustify, RotateCcw, Sparkles, Check, Move, Hand } from 'lucide-react'
+import {
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, RotateCcw, Sparkles, Check, Move, Hand, Copy,
+  AlignStartVertical, AlignCenterVertical, AlignEndVertical, AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
+  AlignHorizontalSpaceAround, AlignVerticalSpaceAround,
+} from 'lucide-react'
 import type { StyleChange } from '@shared/types'
 import { askClaude, get, mergeLive, set, setHand, toast, useStore, wv } from '../store'
 import { Btn, Empty, IconBtn, Row, Section, isTransparent, num, toHex } from '../ui'
@@ -17,6 +21,8 @@ export default function Design(): React.ReactNode {
   // 🔴 훅은 전부 early return «위»에 둔다 — 아래로 내리면 선택이 없을 때 훅 수가 달라져 React #310 으로 화면이 통째로 죽는다 (2026-09-12 실측)
   const hand = useStore((s) => s.hand)
   const moveMode = useStore((s) => s.moveMode)
+  const others = useStore((s) => s.others)
+  const pending = useStore((s) => s.pending)
 
   if (!sel) return <Empty>캔버스에서 요소를 클릭하면 여기에 속성이 뜬다.<br /><br />· 클릭 = 선택, 같은 곳 재클릭 = 부모<br />· 끌면 이동 · 모서리는 크기 · 위 동그라미는 회전<br />· ←↑→↓ 1px, Shift 10px · Alt+←↑→↓ 는 트리 이동<br />· Alt 누른 채 호버 = 거리 재기<br />· V 선택 · H 손 · D 낙서</Empty>
 
@@ -49,12 +55,25 @@ export default function Design(): React.ReactNode {
         const r = await window.hm.source.applyText(project.dir, sel.className, sel.text, liveText)
         if (r.ok) results.push(`${r.file}:${r.line} (글)`); else failed = r.reason
       }
+      // 함께 고른 것들 — 각각 시도한다. 형제끼리 className 이 같으면 «유일하지 않다»로 거절되는 게 정상이다
+      let skipped = 0
+      for (const p of pending) {
+        const r = await window.hm.source.applyStyle(project.dir, p.info.className, p.changes, p.info.text)
+        if (r.ok) results.push(`${r.file}:${r.line}`)
+        else skipped++
+      }
       if (failed) {
         toast(failed, 'err')
         return
       }
+      if (skipped) {
+        wv.send({ type: 'unstyle', hmId: sel.hmId })
+        set((s2) => ({ live: [], liveText: null, pending: [], gitTick: s2.gitTick + 1 }))
+        toast(`${results.length}곳 적용 · ${skipped}개는 소스에서 «유일하지 않아» 못 했다 — 「Claude」 로 넘겨라`, 'err')
+        return
+      }
       wv.send({ type: 'unstyle', hmId: sel.hmId })
-      set((s) => ({ live: [], liveText: null, gitTick: s.gitTick + 1 }))
+      set((s) => ({ live: [], liveText: null, pending: [], gitTick: s.gitTick + 1 }))
       toast('코드에 적용: ' + results.join(', '))
     } finally { setBusy(false) }
   }
@@ -101,6 +120,31 @@ export default function Design(): React.ReactNode {
         <div className="mt-1 text-[10px] text-muted font-mono truncate" title={sel.className}>{sel.className || '(class 없음)'}</div>
         <div className="mt-1 text-[10px] text-muted">{Math.round(sel.rect.w)} × {Math.round(sel.rect.h)} px</div>
       </div>
+
+      {others.length > 0 && (
+        <Section title={`함께 고른 것 ${others.length + 1}개`} right={
+          <button type="button" className="text-[10px] text-muted hover:text-fg cursor-pointer" onClick={() => wv.send({ type: 'select', hmId: sel.hmId })}>하나만 남기기</button>
+        }>
+          <div className="text-[10px] text-muted leading-relaxed">
+            Shift+클릭으로 더 고른다. <b>기준은 마지막에 고른 것</b>(파란 실선) — 나머지가 거기에 맞춰진다.
+          </div>
+          <Row label="맞추기">
+            {([['left', <AlignStartVertical size={13} />], ['hcenter', <AlignCenterVertical size={13} />], ['right', <AlignEndVertical size={13} />],
+               ['top', <AlignStartHorizontal size={13} />], ['vcenter', <AlignCenterHorizontal size={13} />], ['bottom', <AlignEndHorizontal size={13} />]] as const).map(([how, ic]) => (
+              <IconBtn key={how} title={{ left: '왼쪽', hcenter: '가운데(가로)', right: '오른쪽', top: '위', vcenter: '가운데(세로)', bottom: '아래' }[how]}
+                onClick={() => wv.send({ type: 'align', how })}>{ic}</IconBtn>
+            ))}
+          </Row>
+          <Row label="나누기">
+            <IconBtn title="가로 간격 고르게 (3개 이상)" disabled={others.length < 2} onClick={() => wv.send({ type: 'align', how: 'hdist' })}><AlignHorizontalSpaceAround size={13} /></IconBtn>
+            <IconBtn title="세로 간격 고르게 (3개 이상)" disabled={others.length < 2} onClick={() => wv.send({ type: 'align', how: 'vdist' })}><AlignVerticalSpaceAround size={13} /></IconBtn>
+            <span className="text-[10px] text-muted ml-1">양 끝은 그대로, 사이를 고르게</span>
+          </Row>
+          <div className="text-[10px] text-warn leading-relaxed">
+            🔴 맞추기는 <b>눈으로</b> 맞춘다(각자 translate). 제대로는 <b>부모를 flex 로</b> 바꾸는 거고 그건 「Claude」 버튼이 한다.
+          </div>
+        </Section>
+      )}
 
       {hasOwnText && (
         <Section title="글">
@@ -175,6 +219,12 @@ export default function Design(): React.ReactNode {
           <input type="number" step={1} className="w-14 h-6 px-1" value={liveNum('rotate')} onChange={(e) => setXform('rotate', `${e.target.value}deg`)} />
           <span className="text-muted text-[10px]">도</span>
           <Btn onClick={() => { setXform('translate-x', '0px'); setXform('translate-y', '0px'); setXform('rotate', '0deg') }} title="위치·회전만 되돌리기"><Move size={12} /> 제자리로</Btn>
+        </Row>
+        <Row label="복제">
+          <Btn kind="solid" onClick={() => wv.send({ type: 'duplicate' })} title="Ctrl+D — 화면에 하나 더. 🔴 코드엔 «아직» 없다: Claude 에게 보내야 파일에 들어간다">
+            <Copy size={12} /> 복제 (Ctrl+D)
+          </Btn>
+          <span className="text-[10px] text-warn">화면만 — 코드는 Claude</span>
         </Row>
       </Section>
 

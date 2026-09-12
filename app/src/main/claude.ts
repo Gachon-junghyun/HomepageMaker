@@ -42,6 +42,12 @@ export function buildPrompt(req: ClaudeRequest): string {
   const parts: string[] = ['[홈페이지 제작소에서 온 요청 — 이 폴더는 Next.js 홈페이지 리포다]']
   if (req.route) parts.push(`지금 보고 있는 페이지: ${req.route.path}  (파일 ${req.route.file})`)
   if (req.selection) parts.push(describeSelection(req.selection))
+  if (req.others?.length) {
+    parts.push(`함께 고른 것 ${req.others.length}개 (위의 «선택한 요소»가 기준이고, 아래도 같이 바꿔야 한다):`)
+    for (const o of req.others) {
+      parts.push(`- <${o.tag}${o.className ? ` class="${o.className}"` : ''}>` + (o.text ? ` 글: "${o.text.slice(0, 60)}"` : '') + (o.components[0] ? ` · ${o.components[0]}` : ''))
+    }
+  }
   if (req.images?.length) {
     parts.push('첨부 이미지(사람이 «이렇게 해달라»고 준 레퍼런스다 — 반드시 Read 도구로 열어 보고 그대로 참고하라):')
     for (const p of req.images) parts.push(`- ${p}`)

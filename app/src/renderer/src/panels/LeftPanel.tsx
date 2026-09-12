@@ -22,6 +22,7 @@ export default function LeftPanel(): React.ReactNode {
 function Layers(): React.ReactNode {
   const tree = useStore((s) => s.tree)
   const sel = useStore((s) => s.selection)
+  const others = useStore((s) => s.others)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
 
   // 선택되면 그 경로를 펼친다
@@ -36,13 +37,15 @@ function Layers(): React.ReactNode {
     const isOpen = open.has(n.hmId) || depth < 2
     const has = n.children.length > 0
     const active = sel?.hmId === n.hmId
+    const also = others.some((o) => o.hmId === n.hmId)
     return (
       <div>
-        <div className={`flex items-center h-6 pr-2 cursor-pointer text-[11px] whitespace-nowrap ${active ? 'bg-accent/25 text-white' : 'hover:bg-white/5'}`}
+        <div className={`flex items-center h-6 pr-2 cursor-pointer text-[11px] whitespace-nowrap ${active ? 'bg-accent/25 text-white' : also ? 'bg-accent/10' : 'hover:bg-white/5'}`}
           style={{ paddingLeft: depth * 12 + 4 }}
           onMouseEnter={() => wv.send({ type: 'highlight', hmId: n.hmId })}
           onMouseLeave={() => wv.send({ type: 'highlight', hmId: '' })}
-          onClick={() => wv.send({ type: 'select', hmId: n.hmId })}>
+          onClick={(e) => wv.send({ type: e.shiftKey ? 'selectAdd' : 'select', hmId: n.hmId })}
+          title="Shift+클릭 = 함께 고르기">
           <span className="w-4 shrink-0 text-muted inline-flex items-center justify-center" onClick={(e) => { e.stopPropagation(); if (has) toggle(n.hmId) }}>
             {has ? (isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />) : null}
           </span>

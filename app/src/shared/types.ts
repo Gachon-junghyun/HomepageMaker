@@ -146,6 +146,8 @@ export interface ClaudeRequest {
   route?: RouteInfo | null
   /** 첨부 이미지 절대경로들 (이미 프로젝트 안 .homepage-maker/refs 로 복사된 것) */
   images?: string[]
+  /** 함께 고른 것들 (주 선택은 `selection`) */
+  others?: ElementInfo[]
   /** 낙서의 번호 핀 — 첨부 그림 위의 ①②③ 가 각각 무엇인지 말로 풀어 준다 */
   pins?: Pin[]
   sessionId?: string

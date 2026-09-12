@@ -33,6 +33,10 @@ export interface State {
   logOpen: boolean
   pageUrl: string
   selection: ElementInfo | null
+  /** 함께 고른 것들 — `selection` 이 주 선택이다 (PPT 와 같다) */
+  others: ElementInfo[]
+  /** 정렬처럼 «여러 요소»를 한 번에 바꾼 결과. 주 선택 몫은 `live` 에 있다 */
+  pending: { info: ElementInfo; changes: StyleChange[] }[]
   tree: TreeNode | null
   hoverId: string
   selectMode: boolean
@@ -71,7 +75,7 @@ export type SketchTool = 'pin' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlig
 
 let state: State = {
   project: null, routes: [], route: '/', dev: { running: false }, logs: [], logOpen: false, pageUrl: '',
-  selection: null, tree: null, hoverId: '', selectMode: true, hand: true, moveMode: 'translate', device: 'desktop', zoom: 0.75,
+  selection: null, others: [], pending: [], tree: null, hoverId: '', selectMode: true, hand: true, moveMode: 'translate', device: 'desktop', zoom: 0.75,
   leftTab: 'layers', rightTab: 'design', live: [], liveText: null,
   chat: [], claudeRunning: false, allowBash: false, auth: { mode: 'unknown', note: '' }, pendingImages: [], draft: '', toast: null, gitTick: 0,
   sketchOn: false, sketchTool: 'pin', sketchColor: '#f24822', sketchWidth: 4, sketch: [], pins: [],
@@ -232,7 +236,9 @@ export async function askClaude(prompt: string, opts: { includeSelection?: boole
   await window.hm.claude.ask({
     dir: s.project.dir, prompt: text,
     selection: opts.includeSelection === false ? null : s.selection,
-    route, images, pins: images.length ? s.pins : [], sessionId: s.sessionId, allowBash: s.allowBash,
+    route, images, pins: images.length ? s.pins : [],
+    others: opts.includeSelection === false ? [] : s.others,
+    sessionId: s.sessionId, allowBash: s.allowBash,
   })
   set({ pins: [] })
 }

@@ -123,6 +123,64 @@ async function handRun(js: <T>(c: string) => Promise<T>, say: (s: string) => voi
   say('되돌렸나: ' + ok + (ok ? '' : ` 🔴 되돌리기 실패 — 손으로 확인하라: ${target}`))
 }
 
+/**
+ * 다중 선택 → 맞추기 → 나누기 → 복제. PPT 의 «정렬» 메뉴가 웹에서 도는지 본다.
+ * 카드 세 장이 있는 구역을 고른다 (드가자 홈의 화면 목록).
+ */
+async function multiRun(js: <T>(c: string) => Promise<T>, say: (s: string) => void, shot: (n: string) => Promise<void>): Promise<void> {
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  const click = async (x: number, y: number, shift = false): Promise<void> => {
+    const mods = shift ? `, modifiers: ['shift']` : ''
+    await js(`(() => { const w = document.querySelector('webview');
+      w.sendInputEvent({ type: 'mouseMove', x: ${x}, y: ${y} });
+      w.sendInputEvent({ type: 'mouseDown', x: ${x}, y: ${y}, button: 'left', clickCount: 1${mods} });
+      w.sendInputEvent({ type: 'mouseUp', x: ${x}, y: ${y}, button: 'left', clickCount: 1${mods} }) })()`)
+    await wait(450)
+  }
+  await js(`__hm.set({ device: 'desktop', zoom: 0.75, sketchOn: false, selectMode: true, hand: true })`)
+  await wait(1500)
+  await js(`__hm.wv.send({ type: 'mode', on: true }); __hm.wv.send({ type: 'hand', on: true, moveMode: 'translate' })`)
+  // 히어로 안의 버튼 둘 — 위치가 뻔하고 형제라 정렬을 보기 좋다
+  await js(`__hm.wv.send({ type: 'clear' })`)
+  await wait(300)
+  const spots: [number, number][] = JSON.parse(await js<string>(`document.querySelector('webview').executeJavaScript("JSON.stringify([...document.querySelectorAll('main a, main button')].slice(0, 3).map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)] }))")`))
+  say('고를 자리: ' + JSON.stringify(spots))
+  if (spots.length < 2) { say('🔴 고를 요소가 모자라 건너뛴다'); return }
+  await click(spots[0][0], spots[0][1])
+  // 🔴 합성 클릭에는 shiftKey 가 안 실린다(실제 마우스는 문제없다). 레이어 패널과 같은 경로로 «함께 고르기»를 시킨다.
+  const sibs: string[] = JSON.parse(await js<string>(`(() => { const t = __hm.get().tree; const out = []; const walk = n => { out.push(n); n.children.forEach(walk) }; walk(t); const sel = __hm.get().selection; const me = out.find(n => n.hmId === sel.hmId); return JSON.stringify(out.filter(n => n.tag === (me ? me.tag : 'a') && n.hmId !== sel.hmId && !/skip|sr-only/.test(n.label)).slice(0, 2).map(n => n.hmId)) })()`))
+  for (const id of sibs) { await js(`__hm.wv.send({ type: 'selectAdd', hmId: ${JSON.stringify(id)} })`); await wait(400) }
+  say('선택: 주 1 + 함께 ' + (await js<string>(`String(__hm.get().others.length)`)))
+  say('함께 고른 것: ' + (await js<string>(`JSON.stringify(__hm.get().others.map(o => o.tag + '.' + o.className.slice(0, 24)))`)))
+  await js(`__hm.set({ rightTab: 'design' })`)
+  await wait(400)
+  await shot('11-multi.png')
+
+  // 맞추기 (왼쪽) → 나누기(세로)
+  await js(`__hm.wv.send({ type: 'align', how: 'left' })`)
+  await wait(600)
+  say('왼쪽 맞춤 뒤 pending: ' + (await js<string>(`JSON.stringify(__hm.get().pending.map(p => p.changes.map(c => c.prop + '=' + c.value).join(',')))`)))
+  if (spots.length >= 3) {
+    await js(`__hm.wv.send({ type: 'align', how: 'vdist' })`)
+    await wait(600)
+    say('세로 나누기 뒤 pending 수: ' + (await js<string>(`String(__hm.get().pending.length)`)))
+  }
+  await shot('12-align.png')
+
+  // 복제
+  const kids = (): Promise<string> => js<string>(`document.querySelector('webview').executeJavaScript("String(document.querySelector(${JSON.stringify('%%SEL%%')}).parentElement.children.length)")`)
+  const path = await js<string>(`JSON.stringify(__hm.get().selection.cssPath)`)
+  const countKids = async (): Promise<string> => js<string>(`document.querySelector('webview').executeJavaScript('String(document.querySelector(' + ${JSON.stringify(path)} + ').parentElement.children.length)')`)
+  void kids
+  const before = await countKids()
+  await js(`__hm.wv.send({ type: 'duplicate' })`)
+  await wait(900)
+  const after = await countKids()
+  say(`복제: 그 부모의 자식 수 ${before} → ${after}`)
+  say('복제 뒤 초안: ' + (await js<string>(`JSON.stringify(__hm.get().draft.slice(0, 40))`)))
+  await shot('13-duplicate.png')
+}
+
 /** 자가 검증이 고친 파일을 «원문 그대로» 되돌린다. git 을 쓰지 않는다 — 사람이 하던 다른 변경까지 날아가기 때문이다. */
 async function restoreFile(js: <T>(c: string) => Promise<T>, rel: string, content: string): Promise<void> {
   await js(`window.hm.project.writeFile(__hm.get().project.dir, ${JSON.stringify(rel)}, ${JSON.stringify(content)})`)
@@ -192,6 +250,7 @@ export async function autotest(win: BrowserWindow, dirIn: string, out: string): 
     await new Promise((r) => setTimeout(r, 1500))
     await shot('06-claude-mobile.png')
     if (process.env.HM_AUTOTEST_HAND) await handRun(js, say, shot)
+    if (process.env.HM_AUTOTEST_MULTI) await multiRun(js, say, shot)
     if (process.env.HM_AUTOTEST_SKETCH) await sketchRun(js, say, shot)
     say('DONE')
   } catch (e) {

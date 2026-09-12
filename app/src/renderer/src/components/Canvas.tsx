@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { WebviewTag } from 'electron'
-import { DEVICES, get, mergeLive, set, setHand, useStore, wv, type SketchTool } from '../store'
+import { DEVICES, get, mergeLive, set, setHand, toast, useStore, wv, type SketchTool } from '../store'
 import Sketch from './Sketch'
 import SketchBar from './SketchBar'
 
@@ -56,16 +56,31 @@ export default function Canvas(): React.ReactNode {
           askTree()
           break
         case 'select':
-          if (m.source !== 'refresh') set({ selection: m.info, live: [], liveText: null })
+          if (m.source !== 'refresh') set({ selection: m.info, others: m.others ?? [], live: [], liveText: null, pending: [] })
           else set({ selection: m.info })
           askTree()
           break
-        case 'clear': set({ selection: null, live: [], liveText: null }); break
+        case 'clear': set({ selection: null, others: [], live: [], liveText: null, pending: [] }); break
         case 'hover': set({ hoverId: m.hmId }); break
         case 'tree': set({ tree: m.tree }); break
         case 'at': wv.resolveAt(m.id, m.info); break
         // 손으로 옮기고·키우고·돌린 결과 — 화면엔 이미 먹었고 여기서는 «적용 대기» 목록에만 담는다
         case 'xform': mergeLive(m.changes); set({ selection: m.info }); break
+        // 정렬처럼 여러 요소가 한꺼번에 움직인 결과 — 주 선택 몫만 live 로, 나머지는 pending 으로
+        case 'multi': {
+          if (m.tooFew) { toast('맞출 게 모자라다 — 보이는 요소가 둘은 돼야 한다', 'err'); break }
+          const [first, ...rest] = m.items as { info: any; changes: any[] }[]
+          if (first) { mergeLive(first.changes); set({ selection: first.info }) }
+          set({ pending: rest })
+          if (m.skipped) toast(`${m.skipped}개는 화면에 안 보여서 맞추기에서 뺐다`, 'err')
+          break
+        }
+        case 'duplicated':
+          set({ selection: m.info, others: m.others ?? [], live: [], pending: [] })
+          toast(`화면에 ${m.count}개 복제했다 — 🔴 코드엔 아직 없다. Claude 에게 보내야 파일에 들어간다`)
+          set((st) => ({ draft: st.draft.trim() ? st.draft : '방금 화면에서 복제한 것처럼, 이 요소를 하나 더 만들어 바로 뒤에 넣어라. 내용은 그대로 두고 나중에 내가 고치겠다.' }))
+          askTree()
+          break
       }
     }
     const onNav = (): void => {

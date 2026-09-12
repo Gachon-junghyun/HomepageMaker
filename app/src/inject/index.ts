@@ -21,6 +21,12 @@ let altDown = false
 let hovered: Element | null = null
 let selected: Element | null = null
 let selectedPath = ''
+/**
+ * 🔴 함께 고른 것들 (PPT 의 Shift+클릭). `selected` 는 그중 «주 선택»이다 —
+ *    손잡이·정렬 기준·디자인 패널이 전부 주 선택을 본다. PPT 와 같은 규칙이다.
+ */
+let alsoSelected: Element[] = []
+const allSelected = (): Element[] => (selected ? [selected, ...alsoSelected] : [])
 
 /* ---------- id 부여 ---------- */
 const idOf = new WeakMap<Element, string>()
@@ -43,6 +49,7 @@ let selBox: HTMLDivElement, selTip: HTMLDivElement
 let padBox: HTMLDivElement[] = [], marBox: HTMLDivElement[] = []
 let measureLayer: HTMLDivElement
 let snapLayer: HTMLDivElement
+let multiLayer: HTMLDivElement
 
 function mk(cls: string, style: string): HTMLDivElement {
   const d = document.createElement('div')
@@ -67,6 +74,7 @@ function mount(): void {
   selTip = mk('tip', tip + 'background:#0d99ff;display:none;font-weight:600')
   measureLayer = mk('measure', 'inset:0;display:none')
   snapLayer = mk('snap', 'inset:0;display:none')
+  multiLayer = mk('multi', 'inset:0;display:none')
   mountHandles()
 }
 
@@ -139,6 +147,20 @@ function paintBoxModel(el: Element | null): void {
   set(marBox[3], r.left - m[3], r.top, m[3], r.height)
 }
 
+/** 함께 고른 것들을 얇은 상자로 (주 선택만 손잡이를 갖는다 — PPT 와 같다) */
+function paintMulti(): void {
+  multiLayer.innerHTML = ''
+  if (!alsoSelected.length) { multiLayer.style.display = 'none'; return }
+  multiLayer.style.display = 'block'
+  for (const el of alsoSelected) {
+    if (!el.isConnected) continue
+    const r = el.getBoundingClientRect()
+    const d = document.createElement('div')
+    d.setAttribute('style', `position:absolute;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;border:1.5px dashed #0d99ff;background:rgba(13,153,255,.06)`)
+    multiLayer.appendChild(d)
+  }
+}
+
 /** 피그마의 alt-측정: 두 사각형 사이의 빈 거리를 빨간 선으로 */
 function paintMeasure(a: Element | null, b: Element | null): void {
   measureLayer.innerHTML = ''
@@ -198,7 +220,8 @@ function repaint(): void {
     selTip.style.top = r.bottom + 4 + 'px'
     selTip.style.left = r.left + r.width / 2 - selTip.offsetWidth / 2 + 'px'
     paintBoxModel(selected)
-  } else { selBox.style.display = 'none'; selTip.style.display = 'none'; paintBoxModel(null) }
+    paintMulti()
+  } else { selBox.style.display = 'none'; paintMulti(); selTip.style.display = 'none'; paintBoxModel(null) }
   paintMeasure(altDown ? selected : null, hovered)
 }
 
@@ -502,6 +525,120 @@ function nudge(dx: number, dy: number): void {
   postXform(el, 'move')
 }
 
+/* ---------- 맞추기·나누기·복제 (PPT 의 «정렬» 메뉴) ---------- */
+
+export type AlignHow = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom' | 'hdist' | 'vdist'
+
+/**
+ * 🔴 맞추는 방법이 두 가지다. 여기는 «눈으로 맞추는» 쪽 — 고른 것들을 `translate` 로 밀어 가장자리를 맞춘다.
+ *    제대로 된 답은 대개 «부모를 flex 로 바꾸는 것»이고, 그건 Claude 가 한다 (디자인 패널의 「Claude 로」).
+ *    그래서 이 버튼은 «지금 눈에 맞추기», 저 버튼은 «구조를 고치기»다. 둘을 같은 것으로 말하지 마라.
+ *
+ * 기준은 **주 선택**이다 (PPT 와 같다 — 마지막에 고른 것에 나머지를 맞춘다).
+ */
+/**
+ * 🔴 «보이는» 것만 맞춘다. 화면 밖에 숨긴 접근성 링크(`skip-link` 처럼 `-left-[9999px]`)가 섞이면
+ *    그걸 끌어오느라 translate 가 10,199px 같은 값이 된다 — 실측으로 밟았다 (2026-09-12).
+ */
+function isVisible(el: Element): boolean {
+  const r = el.getBoundingClientRect()
+  if (r.width < 2 || r.height < 2) return false
+  if (r.right < -400 || r.left > innerWidth + 400) return false
+  const cs = getComputedStyle(el)
+  return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.01
+}
+
+function alignSelected(how: AlignHow): void {
+  const all = allSelected().filter((e) => e.isConnected) as HTMLElement[]
+  const els = all.filter(isVisible)
+  const hidden = all.length - els.length
+  if (els.length < 2) { post({ type: 'multi', kind: 'align', items: [], skipped: hidden, tooFew: true }); return }
+  const rects = new Map<HTMLElement, DOMRect>(els.map((e) => [e, e.getBoundingClientRect()]))
+  const base = rects.get(els[0])!            // els[0] = 주 선택
+
+  const moveBy = (el: HTMLElement, dx: number, dy: number): void => {
+    if (!dx && !dy) return
+    const x = xformOf(el)
+    applyXform(el, x.tx + dx, x.ty + dy, x.rot)
+  }
+
+  if (how === 'hdist' || how === 'vdist') {
+    // 균등 배치: 양 끝은 그대로 두고 사이를 고르게 (PPT 의 «가로/세로 간격을 동일하게»)
+    if (els.length < 3) return
+    const hor = how === 'hdist'
+    const sorted = [...els].sort((a, b) => (hor ? rects.get(a)!.left - rects.get(b)!.left : rects.get(a)!.top - rects.get(b)!.top))
+    const first = rects.get(sorted[0])!, last = rects.get(sorted[sorted.length - 1])!
+    const span = hor ? (last.left + last.width) - first.left : (last.top + last.height) - first.top
+    const used = sorted.reduce((n, e) => n + (hor ? rects.get(e)!.width : rects.get(e)!.height), 0)
+    const gap = (span - used) / (sorted.length - 1)
+    let cur = hor ? first.left : first.top
+    for (const e of sorted) {
+      const r = rects.get(e)!
+      moveBy(e, hor ? cur - r.left : 0, hor ? 0 : cur - r.top)
+      cur += (hor ? r.width : r.height) + gap
+    }
+  } else {
+    for (const el of els.slice(1)) {
+      const r = rects.get(el)!
+      switch (how) {
+        case 'left': moveBy(el, base.left - r.left, 0); break
+        case 'right': moveBy(el, base.right - r.right, 0); break
+        case 'hcenter': moveBy(el, (base.left + base.width / 2) - (r.left + r.width / 2), 0); break
+        case 'top': moveBy(el, 0, base.top - r.top); break
+        case 'bottom': moveBy(el, 0, base.bottom - r.bottom); break
+        case 'vcenter': moveBy(el, 0, (base.top + base.height / 2) - (r.top + r.height / 2)); break
+      }
+    }
+  }
+  repaint()
+  postMulti('align', hidden)
+}
+
+/**
+ * 복제 — 화면에서는 «진짜로» 하나 더 생긴다(DOM 복제). 🔴 **코드는 이걸로 안 바뀐다.**
+ * 우리의 되찾기는 className 치환이라 JSX 블록을 복사해 넣지 못한다 — 그건 Claude 의 일이다.
+ * 그래서 여기서는 «미리보기»만 만들고, 호스트가 그 사실을 사람에게 말한 뒤 Claude 로 넘긴다 (P6 — 못 하는 걸 한 척하지 않는다).
+ */
+function duplicateSelected(): void {
+  const els = allSelected().filter((e) => e.isConnected) as HTMLElement[]
+  if (!els.length) return
+  const made: Element[] = []
+  for (const el of els) {
+    const copy = el.cloneNode(true) as HTMLElement
+    copy.removeAttribute('id')
+    const x = xformOf(el)
+    applyXform(copy, x.tx + 16, x.ty + 16, x.rot)
+    el.parentElement?.insertBefore(copy, el.nextSibling)
+    made.push(copy)
+  }
+  // 새로 만든 것으로 선택을 옮긴다 (PPT 도 복제하면 사본이 선택된다)
+  selected = made[0]
+  selectedPath = cssPath(made[0])
+  alsoSelected = made.slice(1)
+  repaint()
+  post({
+    type: 'duplicated',
+    count: made.length,
+    info: describe(made[0]),
+    others: alsoSelected.map((e) => describe(e)),
+  })
+}
+
+/** 여러 요소에 걸친 결과를 한 번에 올린다 — 요소마다 «무엇을 어떻게» 가 따로 필요하다. */
+function postMulti(kind: string, skipped = 0): void {
+  const items = allSelected().filter((e) => e.isConnected && isVisible(e)).map((el) => {
+    const x = xformOf(el as HTMLElement)
+    return {
+      info: describe(el),
+      changes: [
+        { prop: 'translate-x', value: `${Math.round(x.tx)}px` },
+        { prop: 'translate-y', value: `${Math.round(x.ty)}px` },
+      ],
+    }
+  })
+  post({ type: 'multi', kind, items, skipped })
+}
+
 /* ---------- 이벤트 ---------- */
 const post = (msg: Record<string, unknown>): void => ipcRenderer.sendToHost('hm', msg)
 
@@ -515,8 +652,28 @@ function pick(x: number, y: number): Element | null {
 function select(el: Element | null, source = 'click'): void {
   selected = el
   selectedPath = el ? cssPath(el) : ''
+  alsoSelected = []
   repaint()
-  post(el ? { type: 'select', info: describe(el), source } : { type: 'clear' })
+  post(el ? { type: 'select', info: describe(el), source, others: [] } : { type: 'clear' })
+}
+
+/** Shift+클릭 — 이미 골라 둔 것에 더하거나 뺀다. 마지막에 더한 것이 «주 선택»이 된다. */
+function selectAdd(el: Element): void {
+  if (!selected) return select(el)
+  if (el === selected) {                      // 주 선택을 다시 누르면 목록에서 뺀다
+    selected = alsoSelected.shift() ?? null
+    selectedPath = selected ? cssPath(selected) : ''
+  } else if (alsoSelected.includes(el)) {
+    alsoSelected = alsoSelected.filter((x) => x !== el)
+  } else {
+    alsoSelected = [selected, ...alsoSelected.filter((x) => x !== el)]
+    selected = el
+    selectedPath = cssPath(el)
+  }
+  repaint()
+  post(selected
+    ? { type: 'select', info: describe(selected), source: 'shift', others: alsoSelected.map((e) => describe(e)) }
+    : { type: 'clear' })
 }
 
 function bind(): void {
@@ -532,6 +689,7 @@ function bind(): void {
     if (justDragged) return                       // 끌어 놓은 것은 «클릭»이 아니다
     const el = pick(e.clientX, e.clientY)
     if (!el) return select(null)
+    if (e.shiftKey) return selectAdd(el)          // PPT 의 Shift+클릭 — 함께 고르기
     // 같은 걸 다시 누르면 부모로 (피그마의 Shift+Enter)
     if (el === selected && el.parentElement && el.parentElement !== document.body) return select(el.parentElement)
     select(el)
@@ -552,6 +710,7 @@ function bind(): void {
     if (e.key === 'Alt') { altDown = true; repaint(); e.preventDefault() }
     if (!selectMode) return
     if (e.key === 'Escape') { select(null); return }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); duplicateSelected(); return }
     if (!selected) return
     // 방향키 = 1px 밀기 (Shift 10px). 트리 이동은 Alt+방향키 — PPT 를 따랐다.
     if (handDrag && !e.altKey && e.key.startsWith('Arrow')) {
@@ -584,9 +743,12 @@ function bind(): void {
   ipcRenderer.on('hm', (_e, msg: any) => {
     switch (msg.type) {
       case 'mode': selectMode = !!msg.on; if (!selectMode) { hovered = null; repaint() } break
+      case 'align': alignSelected(msg.how as AlignHow); break
+      case 'duplicate': duplicateSelected(); break
       case 'hand': handDrag = !!msg.on; moveMode = (msg.moveMode as MoveMode) ?? moveMode; repaint(); break
       case 'nudge': nudge(Number(msg.dx) || 0, Number(msg.dy) || 0); break
       case 'select': { const el = elOf(msg.hmId); if (el) { el.scrollIntoView({ block: 'nearest' }); select(el, 'panel') } break }
+      case 'selectAdd': { const el = elOf(msg.hmId); if (el) { el.scrollIntoView({ block: 'nearest' }); selectAdd(el) } break }
       case 'clear': select(null); break
       case 'highlight': { hovered = elOf(msg.hmId); repaint(); break }
       case 'style': { const el = elOf(msg.hmId) as HTMLElement | null; if (el) { el.style.setProperty(msg.prop, msg.value, 'important'); repaint() } break }
