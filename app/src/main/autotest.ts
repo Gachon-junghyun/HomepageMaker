@@ -54,6 +54,80 @@ async function sketchRun(js: <T>(c: string) => Promise<T>, say: (s: string) => v
   await shot('08-after-send.png')
 }
 
+/**
+ * 손으로 옮기고 키우기: 손잡이(se)를 끌어 크기 → 본체를 끌어 이동 → 회전 손잡이 → 방향키.
+ * webview 에 «진짜» 마우스 입력을 넣는다 (합성 이벤트로는 오버레이의 pointerdown 이 안 잡힌다).
+ */
+async function handRun(js: <T>(c: string) => Promise<T>, say: (s: string) => void, shot: (n: string) => Promise<void>): Promise<void> {
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  const drag = async (x1: number, y1: number, x2: number, y2: number): Promise<void> => {
+    const send = (type: string, x: number, y: number, extra = ''): string =>
+      `document.querySelector('webview').sendInputEvent({ type: '${type}', x: ${Math.round(x)}, y: ${Math.round(y)}, button: 'left', clickCount: 1${extra} })`
+    await js(send('mouseMove', x1, y1))
+    await js(send('mouseDown', x1, y1))
+    for (let i = 1; i <= 6; i++) await js(send('mouseMove', x1 + (x2 - x1) * i / 6, y1 + (y2 - y1) * i / 6, ', movementX: 1, movementY: 1'))
+    await js(send('mouseUp', x2, y2))
+    await wait(350)
+  }
+  const rectOf = async (): Promise<{ left: number; top: number; right: number; bottom: number; width: number; height: number }> =>
+    JSON.parse(await js<string>(`document.querySelector('webview').executeJavaScript("JSON.stringify((e => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } })(document.querySelector('#__hm > .sel')))")`))
+
+  await js(`__hm.set({ device: 'desktop', zoom: 0.75, sketchOn: false, selectMode: true, hand: true })`)
+  await wait(1500)   // 기기 폭을 바꾸면 webview 가 다시 붙는다 — 그 전에 입력을 넣으면 Invalid guestInstanceId
+  await js(`__hm.wv.send({ type: 'mode', on: true }); __hm.wv.send({ type: 'hand', on: true, moveMode: 'translate' })`)
+  await wait(600)
+  // 히어로 안의 제목 하나를 고른다
+  await js(`(() => { const w = document.querySelector('webview'); w.sendInputEvent({ type: 'mouseMove', x: 420, y: 430 }); w.sendInputEvent({ type: 'mouseDown', x: 420, y: 430, button: 'left', clickCount: 1 }); w.sendInputEvent({ type: 'mouseUp', x: 420, y: 430, button: 'left', clickCount: 1 }) })()`)
+  await wait(800)
+  say('고른 것: ' + (await js<string>(`JSON.stringify((s => s && { tag: s.tag, cls: s.className.slice(0, 50), w: Math.round(s.rect.w), h: Math.round(s.rect.h) })(__hm.get().selection))`)))
+  const r0 = await rectOf()
+  say('선택 상자: ' + JSON.stringify({ w: Math.round(r0.width), h: Math.round(r0.height) }))
+
+  // 1) se 손잡이를 오른쪽 아래로 끌어 크기 키우기
+  await drag(r0.right - 2, r0.bottom - 2, r0.right + 90, r0.bottom + 50)
+  say('크기 뒤 live: ' + (await js<string>(`JSON.stringify(__hm.get().live)`)))
+  await shot('09-resize.png')
+
+  // 2) 본체를 끌어 이동
+  const r1 = await rectOf()
+  await drag(r1.left + r1.width / 2, r1.top + r1.height / 2, r1.left + r1.width / 2 + 70, r1.top + r1.height / 2 + 40)
+  say('이동 뒤 live: ' + (await js<string>(`JSON.stringify(__hm.get().live)`)))
+
+  // 3) 회전 손잡이
+  const r2 = await rectOf()
+  await drag(r2.left + r2.width / 2, r2.top - 20, r2.left + r2.width / 2 + 80, r2.top + 10)
+  say('회전 뒤 live: ' + (await js<string>(`JSON.stringify(__hm.get().live)`)))
+
+  // 4) 방향키 (호스트가 보내는 nudge 로 대신 — 포커스가 webview 밖이어도 같은 경로다)
+  await js(`__hm.wv.send({ type: 'nudge', dx: 10, dy: 0 })`)
+  await wait(300)
+  say('방향키 뒤 live: ' + (await js<string>(`JSON.stringify(__hm.get().live)`)))
+  say('실제 style: ' + (await js<string>(`document.querySelector('webview').executeJavaScript("(() => { const p = document.querySelector('#__hm > .sel'); return 'sel ' + p.style.width })()")`)))
+  await js(`__hm.set({ rightTab: 'design' })`)
+  await wait(400)
+  await shot('10-hand.png')
+
+  // 5) 코드에 적용까지 — 실제로 파일이 바뀌는지
+  // 🔴 여기는 «남의 리포»를 진짜로 고친다. 원본을 먼저 들고 있다가 확인 뒤 반드시 되돌린다.
+  //    (2026-09-12: 이 되돌림이 없어서 드가자 홈페이지의 page.tsx 가 실제로 바뀌었고,
+  //     그걸 `git checkout` 으로 되돌리다가 사람이 하던 작업 254줄까지 날릴 뻔했다. 되돌림은 git 이 아니라 여기서 한다.)
+  const target = await js<string>(`(async () => { const s = __hm.get(); const r = await window.hm.source.locate(s.project.dir, s.selection.className, s.selection.text); return r.matches[0] ? r.matches[0].file : '' })()`)
+  if (!target) { say('코드에 적용: 되찾기 실패 — 건너뛴다'); return }
+  const read = (rel: string): Promise<string> => js<string>(`window.hm.project.readFile(__hm.get().project.dir, ${JSON.stringify(rel)})`)
+  const before = await read(target)
+  const applied = await js<string>(`(async () => { const s = __hm.get(); const r = await window.hm.source.applyStyle(s.project.dir, s.selection.className, s.live, s.selection.text); return JSON.stringify(r) })()`)
+  say('코드에 적용: ' + applied)
+  say('파일이 실제로 바뀌었나: ' + ((await read(target)) !== before))
+  await restoreFile(js, target, before)
+  const ok = (await read(target)) === before
+  say('되돌렸나: ' + ok + (ok ? '' : ` 🔴 되돌리기 실패 — 손으로 확인하라: ${target}`))
+}
+
+/** 자가 검증이 고친 파일을 «원문 그대로» 되돌린다. git 을 쓰지 않는다 — 사람이 하던 다른 변경까지 날아가기 때문이다. */
+async function restoreFile(js: <T>(c: string) => Promise<T>, rel: string, content: string): Promise<void> {
+  await js(`window.hm.project.writeFile(__hm.get().project.dir, ${JSON.stringify(rel)}, ${JSON.stringify(content)})`)
+}
+
 export async function autotest(win: BrowserWindow, dirIn: string, out: string): Promise<void> {
   let dir = dirIn
   mkdirSync(out, { recursive: true })
@@ -76,6 +150,7 @@ export async function autotest(win: BrowserWindow, dirIn: string, out: string): 
   try {
     await new Promise((r) => setTimeout(r, 1500))
     await shot('01-start.png')
+    say('인증: ' + (await js<string>(`(async () => JSON.stringify(await window.hm.claude.auth()))()`)))
     if (process.env.HM_AUTOTEST_CREATE) {
       // «새 홈페이지» 흐름: 템플릿 복사 → git init → 열기(npm install 포함)
       const p = await js<{ dir: string }>(`window.hm.project.create('nextjs-susanna-stack', ${JSON.stringify(process.env.HM_AUTOTEST_CREATE)})`)
@@ -86,6 +161,15 @@ export async function autotest(win: BrowserWindow, dirIn: string, out: string): 
     say('openProject 호출')
     say('dev url: ' + (await waitFor('!!__hm.get().dev.url', 400000)) + ' → ' + (await js<string>('__hm.get().dev.url')))
     say('tree: ' + (await waitFor('!!__hm.get().tree', 90000)))
+    // 🔴 오버레이가 안 붙었으면 그 뒤 «선택·손·핀»이 전부 조용히 무의미해진다. 여기서 크게 말하고 한 번 되살린다.
+    const hasOverlay = async (): Promise<boolean> =>
+      (await js<string>(`document.querySelector('webview').executeJavaScript("String(!!document.getElementById('__hm'))")`).catch(() => 'false')) === 'true'
+    if (!(await hasOverlay())) {
+      say('⚠️ 오버레이 없음 — 되살린다')
+      await js(`__hm.wv.reload()`)
+      await new Promise((r) => setTimeout(r, 6000))
+      if (!(await hasOverlay())) say('🔴 오버레이가 끝내 안 붙었다 — 이 실행의 선택·손·핀 결과는 «무효»다 (dev 서버 고아를 의심하라)')
+    }
     await new Promise((r) => setTimeout(r, 2500))
     await shot('02-loaded.png')
     // 캔버스 한가운데를 webview 안에서 클릭 → 선택
@@ -107,6 +191,7 @@ export async function autotest(win: BrowserWindow, dirIn: string, out: string): 
     await js(`__hm.set({ rightTab: 'claude', leftTab: 'layers', device: 'mobile' })`)
     await new Promise((r) => setTimeout(r, 1500))
     await shot('06-claude-mobile.png')
+    if (process.env.HM_AUTOTEST_HAND) await handRun(js, say, shot)
     if (process.env.HM_AUTOTEST_SKETCH) await sketchRun(js, say, shot)
     say('DONE')
   } catch (e) {

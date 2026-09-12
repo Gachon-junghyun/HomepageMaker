@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ClaudeEvent, ClaudeRequest, DevServerState, Project, RouteInfo, StyleChange } from '../shared/types'
+import type { AuthInfo, ClaudeEvent, ClaudeRequest, DevServerState, Project, RouteInfo, StyleChange } from '../shared/types'
 
 /**
  * 앱 창(React) 이 쓰는 API 는 `window.hm` 하나다. 메인의 ipcMain.handle 이름과 1:1 이다 — 여기 없는 채널은 없다.
@@ -39,6 +39,7 @@ const api = {
     abort: () => inv<void>('claude:abort'),
     running: () => inv<boolean>('claude:running'),
     preview: (req: ClaudeRequest) => inv<string>('claude:preview', req),
+    auth: () => inv<AuthInfo>('claude:auth'),
     onEvent: (cb: (e: ClaudeEvent) => void) => on<ClaudeEvent>('claude:event', cb),
   },
   images: {

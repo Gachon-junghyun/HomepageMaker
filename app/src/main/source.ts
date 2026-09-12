@@ -136,6 +136,10 @@ function mapChange(c: StyleChange): { remove: RegExp; add: string } | null {
     case 'border-color': return { remove: /^border-(?!(\d|\[\d|solid|dashed|dotted|double|none|hidden|[trblxy]-\d|[trblxy]$))/, add: arb('border') }
     case 'border-width': return { remove: /^border(-\d+|-\[\d[^\]]*\])?$/, add: v === '1px' ? 'border' : arb('border') }
     case 'gap': return { remove: /^gap-(?![xy]-)/, add: arb('gap') }
+    // 손으로 옮긴 결과. 0 이면 클래스를 지우기만 한다 (`translate-x-[0px]` 를 남기지 않는다)
+    case 'translate-x': return { remove: /^translate-x-/, add: parseFloat(v) ? arb('translate-x') : '' }
+    case 'translate-y': return { remove: /^translate-y-/, add: parseFloat(v) ? arb('translate-y') : '' }
+    case 'rotate': return { remove: /^-?rotate-/, add: parseFloat(v) ? arb('rotate') : '' }
     case 'opacity': return { remove: /^opacity-/, add: arb('opacity') }
     case 'width': return { remove: /^w-/, add: arb('w') }
     case 'height': return { remove: /^h-/, add: arb('h') }
@@ -164,7 +168,7 @@ export function rewriteClassName(className: string, changes: StyleChange[]): str
     const m = mapChange(c)
     if (!m) continue
     tokens = tokens.filter((t) => t.includes(':') || !m.remove.test(t))
-    tokens.push(m.add)
+    if (m.add) tokens.push(m.add)
   }
   return tokens.join(' ')
 }

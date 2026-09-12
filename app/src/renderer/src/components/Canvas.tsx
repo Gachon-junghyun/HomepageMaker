@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { WebviewTag } from 'electron'
-import { DEVICES, get, set, useStore, wv, type SketchTool } from '../store'
+import { DEVICES, get, mergeLive, set, setHand, useStore, wv, type SketchTool } from '../store'
 import Sketch from './Sketch'
 import SketchBar from './SketchBar'
 
@@ -52,6 +52,7 @@ export default function Canvas(): React.ReactNode {
           clearTimeout(readyTimer)
           revived = 0
           wv.send({ type: 'mode', on: get().selectMode })
+          wv.send({ type: 'hand', on: get().hand, moveMode: get().moveMode })
           askTree()
           break
         case 'select':
@@ -63,6 +64,8 @@ export default function Canvas(): React.ReactNode {
         case 'hover': set({ hoverId: m.hmId }); break
         case 'tree': set({ tree: m.tree }); break
         case 'at': wv.resolveAt(m.id, m.info); break
+        // 손으로 옮기고·키우고·돌린 결과 — 화면엔 이미 먹었고 여기서는 «적용 대기» 목록에만 담는다
+        case 'xform': mergeLive(m.changes); set({ selection: m.info }); break
       }
     }
     const onNav = (): void => {
@@ -102,6 +105,7 @@ export default function Canvas(): React.ReactNode {
       }
       const sketching = get().sketchOn
       if (e.key === 'd' || e.key === 'D') return toggleSketch()
+      if (e.key === 'h' || e.key === 'H') return setHand({ hand: !get().hand })
       if (sketching && /^[1-7]$/.test(e.key)) return set({ sketchTool: TOOLS[+e.key - 1] })
       if (!sketching && (e.key === 'v' || e.key === 'V')) { const on = !get().selectMode; set({ selectMode: on }); wv.send({ type: 'mode', on }) }
       if (e.key === 'Escape' && !sketching) wv.send({ type: 'clear' })

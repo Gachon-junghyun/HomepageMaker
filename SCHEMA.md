@@ -21,6 +21,7 @@
 │   ├─ projects.ts   열기·clone·템플릿 복사·라우트 목록·첨부 복사   ✅ (clone ⚠️)
 │   ├─ devserver.ts  npm run dev 스폰·포트 파싱·로그 중계·kill tree ✅
 │   ├─ claude.ts     프롬프트 조립 · claude -p stream-json 스폰    ⚠️  배관 확인, 편집은 로그인 뒤
+│   ├─ auth.ts       claude 가 «무엇으로» 인증하나 (구독 / API 키)   ✅  비용이 «청구»인지 «환산»인지를 가른다
 │   ├─ source.ts     className → 소스 줄 되찾기 · Tailwind 재작성  ✅  단위 테스트
 │   ├─ git.ts        status/commit/push/pull/diff/log/remote      ✅ 읽기 / ⚠️ 쓰기
 │   └─ tokens.ts     globals.css @theme 읽기/쓰기                  ✅ 읽기 / ⚠️ 쓰기
@@ -32,7 +33,12 @@
 │   ├─ 선택 상자 + 핸들 + 크기 배지                                 ✅
 │   ├─ 박스모델 칠하기 (padding 초록 · margin 주황)                 ✅
 │   ├─ Alt 거리 재기 (빨간 선)                                     ⚠️
-│   ├─ 방향키 탐색 · Esc · 재클릭=부모                              ⚠️
+│   ├─ 방향키 탐색(Alt+방향키) · Esc · 재클릭=부모                   ⚠️
+│   ├─ ✋ 손으로 만지기 — 손잡이 8 + 회전 1                          ✅
+│   │   ├─ 끌어 이동 (translate 또는 margin) · 모서리로 크기 · 위로 회전 ✅
+│   │   ├─ 붙임(부모·형제 가장자리) + 8px 격자 · Alt 로 해제          ✅
+│   │   ├─ 방향키 1px / Shift 10px                                  ✅
+│   │   └─ 선택 상자·배지가 회전을 같이 따라간다                       ✅
 │   ├─ React fiber → 컴포넌트 경로 / 소유자                         ✅  (RSC 는 안 잡힘)
 │   ├─ describe(): 태그·class·글·computed·cssPath·crumbs           ✅
 │   ├─ tree(): 레이어용 DOM 트리                                   ✅
@@ -57,7 +63,8 @@
 │   └─ panels/
 │       ├─ LeftPanel.tsx   레이어 ✅ · 페이지 ✅ (+추가=Claude ⚠️) · 토큰 ✅
 │       ├─ RightPanel.tsx  탭 넷
-│       ├─ Design.tsx      글 · 글자 · 채우기 · 간격 · 배치 · 테두리 · 효과 → 라이브 ✅ · 코드에 적용 ✅ · Claude 로 넘기기 ⚠️
+│       ├─ Design.tsx      글 · 글자 · 채우기 · 간격 · 손으로(위치·회전) · 배치 · 테두리 · 효과 ✅
+│       │                   → 라이브 ✅ · 코드에 적용 ✅ · Claude 로 넘기기 ⚠️
 │       ├─ ClaudePanel.tsx 채팅 · 선택 칩 · 첨부(끌기/붙여넣기/파일) · Bash 토글 · 미리보기 · 중단   ⚠️
 │       ├─ CodePanel.tsx   되찾기 결과(정확/부분/추정) · 스니펫 · VS Code   ✅
 │       └─ GitPanel.tsx    브랜치 · remote · push/pull · 바뀐 파일 · diff · 커밋 · 기록   ✅ 읽기
@@ -80,5 +87,6 @@
 ```
 
 ## 변경 이력
+- 2026-09-12 (이어서2) — ✋손으로 만지기(`inject` 드래그·`Design` 손으로 절) · `auth.ts` 추가.
 - 2026-09-12 (이어서) — 낙서(Sketch·SketchBar) · at() · hm-file:// · refsDir() 추가.
 - 2026-09-12 — 최초 작성. v0.1 트리.

@@ -8,6 +8,7 @@ import * as claude from './claude'
 import * as source from './source'
 import * as git from './git'
 import * as tokens from './tokens'
+import { authInfo } from './auth'
 import { readSettings, writeSettings, forgetRecent } from './store'
 import { autotest } from './autotest'
 import type { ClaudeRequest, StyleChange } from '../shared/types'
@@ -107,6 +108,7 @@ app.whenReady().then(() => {
   ipcMain.handle('claude:ask', (_e, req: ClaudeRequest) => { claude.ask(req, (ev) => send('claude:event', ev)); return true })
   ipcMain.handle('claude:abort', () => claude.abort())
   ipcMain.handle('claude:running', () => claude.isRunning())
+  ipcMain.handle('claude:auth', () => authInfo())
   ipcMain.handle('claude:preview', (_e, req: ClaudeRequest) => claude.buildPrompt(req))
   ipcMain.handle('images:pick', () => projects.pickImages())
   ipcMain.handle('images:stash', (_e, dir: string, files: string[]) => projects.stashImages(dir, files))

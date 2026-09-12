@@ -23,6 +23,7 @@ export default function App(): React.ReactNode {
     const offState = window.hm.dev.onState((d) => set({ dev: d }))
     const offClaude = window.hm.claude.onEvent(onClaudeEvent)
     void window.hm.settings.get().then((s) => set({ allowBash: !!s.claude?.allowBash }))
+    void window.hm.claude.auth().then((auth) => set({ auth }))
     return () => { offLog(); offState(); offClaude() }
   }, [])
 

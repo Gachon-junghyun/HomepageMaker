@@ -1,5 +1,5 @@
-import { ChevronLeft, MousePointer2, RefreshCw, ExternalLink, Code2, Terminal, Smartphone, Tablet, Monitor, Maximize2, Minus, Plus, Play, Square, Pencil } from 'lucide-react'
-import { DEVICES, closeProject, set, useStore, wv, type Device } from '../store'
+import { ChevronLeft, MousePointer2, RefreshCw, ExternalLink, Code2, Terminal, Smartphone, Tablet, Monitor, Maximize2, Minus, Plus, Play, Square, Pencil, Hand } from 'lucide-react'
+import { DEVICES, closeProject, set, setHand, useStore, wv, type Device } from '../store'
 import { toggleSketch } from './Canvas'
 import { IconBtn } from '../ui'
 
@@ -13,6 +13,7 @@ export default function TopBar(): React.ReactNode {
   const zoom = useStore((s) => s.zoom)
   const selectMode = useStore((s) => s.selectMode)
   const sketchOn = useStore((s) => s.sketchOn)
+  const hand = useStore((s) => s.hand)
   const logOpen = useStore((s) => s.logOpen)
 
   const setMode = (on: boolean): void => { set({ selectMode: on }); wv.send({ type: 'mode', on }) }
@@ -30,6 +31,7 @@ export default function TopBar(): React.ReactNode {
 
       <div className="flex-1" />
       <IconBtn title="선택 도구 (V) — 켜면 클릭이 페이지로 안 가고 요소를 고른다. 꺼도 Ctrl+클릭은 고른다" active={selectMode && !sketchOn} onClick={() => { if (sketchOn) toggleSketch(); else setMode(!selectMode) }}><MousePointer2 size={14} /></IconBtn>
+      <IconBtn title="손으로 옮기고 키우기 (H) — 고른 요소에 손잡이가 붙는다. 끌면 이동, 모서리는 크기, 위 동그라미는 회전" active={hand && !sketchOn} onClick={() => setHand({ hand: !hand })}><Hand size={14} /></IconBtn>
       <IconBtn title="낙서 (D) — 화면에 손으로 그리고 번호 핀을 찍어 Claude 에게 설명한다" active={sketchOn} onClick={toggleSketch}><Pencil size={14} /></IconBtn>
       <div className="w-px h-5 bg-line mx-1" />
       {(Object.keys(DEVICES) as Device[]).map((d) => (

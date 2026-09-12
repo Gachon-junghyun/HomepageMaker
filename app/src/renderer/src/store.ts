@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { ClaudeEvent, DevServerState, ElementInfo, Pin, Project, RouteInfo, SketchItem, StyleChange, TreeNode } from '@shared/types'
+import type { AuthInfo, ClaudeEvent, DevServerState, ElementInfo, Pin, Project, RouteInfo, SketchItem, StyleChange, TreeNode } from '@shared/types'
 
 /**
  * 앱 전체 상태 하나. 라이브러리 없이 useSyncExternalStore 다 — 상태 모양이 한 곳에 다 보이게.
@@ -36,6 +36,10 @@ export interface State {
   tree: TreeNode | null
   hoverId: string
   selectMode: boolean
+  /** 손잡이로 옮기고 키우기 (PPT 의 그 손). 켜면 선택 상자에 손잡이가 붙는다 */
+  hand: boolean
+  /** 옮길 때 무엇을 바꾸나 — translate(겹침 허용·흐름 유지) / margin(주변을 실제로 민다) */
+  moveMode: 'translate' | 'margin'
   device: Device
   zoom: number
   leftTab: 'layers' | 'pages' | 'tokens'
@@ -46,6 +50,8 @@ export interface State {
   claudeRunning: boolean
   sessionId?: string
   allowBash: boolean
+  /** claude CLI 가 무엇으로 인증하는지 — 비용을 «청구»로 쓸지 «환산»으로 쓸지가 여기서 갈린다 */
+  auth: AuthInfo
   pendingImages: string[]
   /** Claude 입력칸의 글. 낙서가 핀 메모로 여기에 초안을 채우므로 store 에 있다 (로컬 state 였으면 밖에서 못 채운다) */
   draft: string
@@ -65,9 +71,9 @@ export type SketchTool = 'pin' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlig
 
 let state: State = {
   project: null, routes: [], route: '/', dev: { running: false }, logs: [], logOpen: false, pageUrl: '',
-  selection: null, tree: null, hoverId: '', selectMode: true, device: 'desktop', zoom: 0.75,
+  selection: null, tree: null, hoverId: '', selectMode: true, hand: true, moveMode: 'translate', device: 'desktop', zoom: 0.75,
   leftTab: 'layers', rightTab: 'design', live: [], liveText: null,
-  chat: [], claudeRunning: false, allowBash: false, pendingImages: [], draft: '', toast: null, gitTick: 0,
+  chat: [], claudeRunning: false, allowBash: false, auth: { mode: 'unknown', note: '' }, pendingImages: [], draft: '', toast: null, gitTick: 0,
   sketchOn: false, sketchTool: 'pin', sketchColor: '#f24822', sketchWidth: 4, sketch: [], pins: [],
 }
 const subs = new Set<() => void>()
@@ -127,6 +133,26 @@ export const wv = {
   },
 }
 
+/** 손으로 만든 변경을 live 에 포갠다 — 같은 prop 은 덮어쓴다. 「코드에 적용」이 이걸 그대로 먹는다. */
+export function mergeLive(changes: StyleChange[]): void {
+  set((s) => {
+    const live = [...s.live]
+    for (const c of changes) {
+      const i = live.findIndex((x) => x.prop === c.prop)
+      if (i >= 0) live[i] = c
+      else live.push(c)
+    }
+    return { live }
+  })
+}
+
+/** 손 설정을 webview 로 흘린다. 두 곳이 따로 기억하면 화면과 동작이 갈린다. */
+export function setHand(patch: { hand?: boolean; moveMode?: State['moveMode'] }): void {
+  set(patch)
+  const s = get()
+  wv.send({ type: 'hand', on: s.hand, moveMode: s.moveMode })
+}
+
 /* ---------- 프로젝트 열기/닫기 ---------- */
 export async function openProject(p: Project): Promise<void> {
   set({ project: p, routes: [], route: '/', selection: null, tree: null, live: [], liveText: null, chat: [], sessionId: undefined, logs: [], pageUrl: '' })
@@ -155,7 +181,7 @@ export function onClaudeEvent(ev: ClaudeEvent): void {
     case 'result':
       set({ claudeRunning: false, sessionId: ev.session_id ?? state.sessionId, gitTick: state.gitTick + 1 })
       if (ev.is_error) pushChat({ role: 'system', text: ev.result || '오류로 끝났다', error: true })
-      else pushChat({ role: 'system', text: `끝. ${ev.duration_ms ? (ev.duration_ms / 1000).toFixed(1) + 's' : ''}${ev.cost ? ` · $${ev.cost.toFixed(3)}` : ''}`, cost: ev.cost, ms: ev.duration_ms })
+      else pushChat({ role: 'system', text: `끝. ${ev.duration_ms ? (ev.duration_ms / 1000).toFixed(1) + 's' : ''}${costLabel(ev.cost)}`, cost: ev.cost, ms: ev.duration_ms })
       break
     case 'done':
       if (state.claudeRunning) { set({ claudeRunning: false, gitTick: state.gitTick + 1 }); if (ev.is_error) pushChat({ role: 'system', text: ev.text || 'claude 가 비정상 종료', error: true }) }
@@ -166,6 +192,19 @@ export function onClaudeEvent(ev: ClaudeEvent): void {
       if (ev.raw && /error|Error|not found|ENOENT/.test(ev.raw)) pushChat({ role: 'system', text: ev.raw.trim(), error: true })
       break
   }
+}
+
+/**
+ * 🔴 `total_cost_usd` 를 그대로 «$1.413» 으로 찍지 마라.
+ *    구독으로 쓰는 중에도 그 숫자가 오고, 화면이 금액만 보여주면 «돈이 나갔다»로 읽힌다 (2026-09-12 실측 — 사람이 놀랐다).
+ *    청구인지 환산인지는 인증 방식이 정한다.
+ */
+function costLabel(cost?: number): string {
+  if (!cost) return ''
+  const m = state.auth.mode
+  if (m === 'subscription') return ` · 토큰 $${cost.toFixed(2)} 어치 (구독 사용량 — 청구 아님)`
+  if (m === 'api') return ` · $${cost.toFixed(3)} 청구됨 (API 키)`
+  return ` · 토큰 $${cost.toFixed(2)} 어치 (청구 여부 확인 못 함)`
 }
 
 function toolDetail(name: string, input: any): string {

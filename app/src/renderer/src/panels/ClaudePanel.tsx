@@ -13,6 +13,7 @@ export default function ClaudePanel(): React.ReactNode {
   const sel = useStore((s) => s.selection)
   const images = useStore((s) => s.pendingImages)
   const allowBash = useStore((s) => s.allowBash)
+  const auth = useStore((s) => s.auth)
   const sessionId = useStore((s) => s.sessionId)
   const project = useStore((s) => s.project)!
   const text = useStore((s) => s.draft)
@@ -69,6 +70,7 @@ export default function ClaudePanel(): React.ReactNode {
             말로 설명하기 어려우면 <b>낙서(D)</b> — 화면에 동그라미 치고 ①②③ 을 찍으면
             그 자리가 «무엇»인지까지 같이 간다.<br /><br />
             Claude 는 이 리포 폴더 안에서 파일만 고친다. 커밋·push·배포는 Git 탭에서 사람이 누른다.
+            {auth.note && <><br /><br /><span className={auth.mode === 'api' ? 'text-warn' : ''}>{auth.note}</span></>}
           </div>
         )}
         {chat.map((m) => (
@@ -119,6 +121,10 @@ export default function ClaudePanel(): React.ReactNode {
             <input type="checkbox" className="accent-accent" checked={allowBash} onChange={(e) => { set({ allowBash: e.target.checked }); void window.hm.settings.set({ claude: { allowBash: e.target.checked } }) }} /> Bash
           </label>
           {sessionId && <IconBtn title="새 대화 (맥락 초기화)" onClick={() => set({ sessionId: undefined, chat: [] })}><RotateCcw size={13} /></IconBtn>}
+          {/* 🔴 돈이 나가는지 아닌지를 «항상» 보이게 둔다 — 끝난 뒤 금액만 보면 구독도 청구로 읽힌다 */}
+          <span className={`text-[10px] ml-1 ${auth.mode === 'api' ? 'text-warn' : 'text-muted'}`} title={auth.note}>
+            {auth.mode === 'subscription' ? `구독 ${auth.plan ?? ''}` : auth.mode === 'api' ? 'API 키 · 청구됨' : '인증 ?'}
+          </span>
           <div className="flex-1" />
           {running
             ? <Btn kind="danger" onClick={() => { void window.hm.claude.abort(); set({ claudeRunning: false }) }}><Square size={12} /> 중단</Btn>

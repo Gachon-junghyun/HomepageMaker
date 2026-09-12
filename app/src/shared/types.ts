@@ -99,6 +99,13 @@ export interface ClaudeEvent {
   raw?: string
 }
 
+/** `claude` CLI 가 무엇으로 인증하는지. 비용 표시가 «청구»인지 «환산»인지를 이게 가른다. */
+export interface AuthInfo {
+  mode: 'api' | 'subscription' | 'unknown'
+  plan?: string
+  note: string
+}
+
 export interface DevServerState {
   running: boolean
   url?: string

@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { AlignLeft, AlignCenter, AlignRight, AlignJustify, RotateCcw, Sparkles, Check } from 'lucide-react'
+import { AlignLeft, AlignCenter, AlignRight, AlignJustify, RotateCcw, Sparkles, Check, Move, Hand } from 'lucide-react'
 import type { StyleChange } from '@shared/types'
-import { askClaude, get, set, toast, useStore, wv } from '../store'
+import { askClaude, get, mergeLive, set, setHand, toast, useStore, wv } from '../store'
 import { Btn, Empty, IconBtn, Row, Section, isTransparent, num, toHex } from '../ui'
 
 /**
@@ -14,8 +14,11 @@ export default function Design(): React.ReactNode {
   const liveText = useStore((s) => s.liveText)
   const project = useStore((s) => s.project)!
   const [busy, setBusy] = useState(false)
+  // 🔴 훅은 전부 early return «위»에 둔다 — 아래로 내리면 선택이 없을 때 훅 수가 달라져 React #310 으로 화면이 통째로 죽는다 (2026-09-12 실측)
+  const hand = useStore((s) => s.hand)
+  const moveMode = useStore((s) => s.moveMode)
 
-  if (!sel) return <Empty>캔버스에서 요소를 클릭하면 여기에 속성이 뜬다.<br /><br />· 클릭 = 선택, 같은 곳 재클릭 = 부모<br />· ↑↓←→ 로 트리 이동, Esc 해제<br />· Alt 누른 채 호버 = 거리 재기<br />· V = 선택 도구 켜고 끄기</Empty>
+  if (!sel) return <Empty>캔버스에서 요소를 클릭하면 여기에 속성이 뜬다.<br /><br />· 클릭 = 선택, 같은 곳 재클릭 = 부모<br />· 끌면 이동 · 모서리는 크기 · 위 동그라미는 회전<br />· ←↑→↓ 1px, Shift 10px · Alt+←↑→↓ 는 트리 이동<br />· Alt 누른 채 호버 = 거리 재기<br />· V 선택 · H 손 · D 낙서</Empty>
 
   const val = (prop: string): string => live.find((c) => c.prop === prop)?.value ?? sel.computed[prop] ?? ''
   const change = (prop: string, value: string): void => {
@@ -61,6 +64,22 @@ export default function Design(): React.ReactNode {
     wv.send({ type: 'unstyle', hmId: sel.hmId })
     void askClaude(describeForClaude(changes))
     set({ live: [], liveText: null })
+  }
+
+  /** 손으로 만든 값은 live 에만 있다(인라인 style 로 화면엔 이미 먹었다). 없으면 0. */
+  const liveNum = (prop: string): number => Math.round(parseFloat(live.find((c) => c.prop === prop)?.value ?? '0') || 0)
+  const setXform = (prop: string, value: string): void => {
+    mergeLive([{ prop, value }])
+    // 숫자로 고쳐도 화면이 같이 움직여야 한다 — translate/rotate 는 한 속성에 같이 들어간다
+    const tx = prop === 'translate-x' ? parseFloat(value) || 0 : liveNum('translate-x')
+    const ty = prop === 'translate-y' ? parseFloat(value) || 0 : liveNum('translate-y')
+    const rot = prop === 'rotate' ? parseFloat(value) || 0 : liveNum('rotate')
+    if (prop.startsWith('translate') || prop === 'rotate') {
+      const parts = [tx || ty ? `translate(${tx}px, ${ty}px)` : '', rot ? `rotate(${rot}deg)` : ''].filter(Boolean)
+      wv.send({ type: 'style', hmId: sel.hmId, prop: 'transform', value: parts.join(' ') || 'none' })
+    } else {
+      wv.send({ type: 'style', hmId: sel.hmId, prop, value })
+    }
   }
 
   const bg = val('background-color')
@@ -126,6 +145,37 @@ export default function Design(): React.ReactNode {
         <Row label="안쪽">{(['top', 'right', 'bottom', 'left'] as const).map((d) => <input key={d} type="number" title={'padding-' + d} className="w-12 h-6 px-1" value={num(val('padding-' + d))} onChange={(e) => px('padding-' + d, +e.target.value)} />)}</Row>
         <Row label="바깥">{(['top', 'right', 'bottom', 'left'] as const).map((d) => <input key={d} type="number" title={'margin-' + d} className="w-12 h-6 px-1" value={num(val('margin-' + d))} onChange={(e) => px('margin-' + d, +e.target.value)} />)}</Row>
         <div className="text-[10px] text-muted">순서: 위 · 오른쪽 · 아래 · 왼쪽 — 초록(안쪽)·주황(바깥)이 캔버스에 칠해진다</div>
+      </Section>
+
+      <Section title="손으로" right={
+        <button type="button" title="손잡이 보이기/숨기기 (H)" onClick={() => setHand({ hand: !hand })}
+          className={`no-drag h-6 px-1.5 rounded text-[10px] inline-flex items-center gap-1 cursor-pointer ${hand ? 'bg-accent text-white' : 'bg-panel-2 border border-line text-muted'}`}>
+          <Hand size={11} /> {hand ? '켜짐' : '꺼짐'}
+        </button>
+      }>
+        <div className="text-[10px] text-muted leading-relaxed">
+          모서리를 끌면 크기, 안쪽을 끌면 이동, 위 동그라미는 회전. 방향키 1px · Shift 10px ·
+          Shift+모서리 비율 유지 · Alt 는 격자·붙임 해제.
+        </div>
+        <Row label="이동 방식">
+          <select className="h-6 px-1 flex-1 text-[11px]" value={moveMode} onChange={(e) => setHand({ moveMode: e.target.value as 'translate' | 'margin' })}>
+            <option value="translate">띄워 옮기기 (흐름 유지 · 겹칠 수 있음)</option>
+            <option value="margin">밀어 옮기기 (여백 — 주변이 밀림)</option>
+          </select>
+        </Row>
+        <Row label="위치">
+          <span className="text-muted text-[10px]">X</span>
+          <input type="number" className="w-14 h-6 px-1" value={moveMode === 'margin' ? num(val('margin-left')) : liveNum('translate-x')}
+            onChange={(e) => setXform(moveMode === 'margin' ? 'margin-left' : 'translate-x', `${e.target.value}px`)} />
+          <span className="text-muted text-[10px]">Y</span>
+          <input type="number" className="w-14 h-6 px-1" value={moveMode === 'margin' ? num(val('margin-top')) : liveNum('translate-y')}
+            onChange={(e) => setXform(moveMode === 'margin' ? 'margin-top' : 'translate-y', `${e.target.value}px`)} />
+        </Row>
+        <Row label="회전">
+          <input type="number" step={1} className="w-14 h-6 px-1" value={liveNum('rotate')} onChange={(e) => setXform('rotate', `${e.target.value}deg`)} />
+          <span className="text-muted text-[10px]">도</span>
+          <Btn onClick={() => { setXform('translate-x', '0px'); setXform('translate-y', '0px'); setXform('rotate', '0deg') }} title="위치·회전만 되돌리기"><Move size={12} /> 제자리로</Btn>
+        </Row>
       </Section>
 
       <Section title="배치">

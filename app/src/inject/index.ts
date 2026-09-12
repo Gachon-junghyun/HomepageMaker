@@ -42,6 +42,7 @@ let hoverBox: HTMLDivElement, hoverTip: HTMLDivElement
 let selBox: HTMLDivElement, selTip: HTMLDivElement
 let padBox: HTMLDivElement[] = [], marBox: HTMLDivElement[] = []
 let measureLayer: HTMLDivElement
+let snapLayer: HTMLDivElement
 
 function mk(cls: string, style: string): HTMLDivElement {
   const d = document.createElement('div')
@@ -65,12 +66,35 @@ function mount(): void {
   selBox = mk('sel', 'border:2px solid #0d99ff;display:none;outline:1px solid rgba(255,255,255,.6)')
   selTip = mk('tip', tip + 'background:#0d99ff;display:none;font-weight:600')
   measureLayer = mk('measure', 'inset:0;display:none')
-  // 선택 상자 모서리 핸들 4개 (피그마의 리사이즈 핸들 모양 — 여기선 표시용)
-  for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-    const h = document.createElement('div')
-    h.setAttribute('style', `position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid #0d99ff;left:${x ? 'calc(100% - 4px)' : '-4px'};top:${y ? 'calc(100% - 4px)' : '-4px'}`)
-    selBox.appendChild(h)
+  snapLayer = mk('snap', 'inset:0;display:none')
+  mountHandles()
+}
+
+/**
+ * 선택 상자의 손잡이 — PPT·포토샵처럼 «잡아서» 크기를 바꾸고 돌린다.
+ * 🔴 오버레이에서 이것만 `pointer-events:auto` 다. 나머지는 전부 통과시킨다 —
+ *    안 그러면 페이지를 클릭조차 못 한다.
+ */
+const HANDLES: { id: string; x: number; y: number; cur: string }[] = [
+  { id: 'nw', x: 0, y: 0, cur: 'nwse-resize' }, { id: 'n', x: 0.5, y: 0, cur: 'ns-resize' }, { id: 'ne', x: 1, y: 0, cur: 'nesw-resize' },
+  { id: 'w', x: 0, y: 0.5, cur: 'ew-resize' }, { id: 'e', x: 1, y: 0.5, cur: 'ew-resize' },
+  { id: 'sw', x: 0, y: 1, cur: 'nesw-resize' }, { id: 's', x: 0.5, y: 1, cur: 'ns-resize' }, { id: 'se', x: 1, y: 1, cur: 'nwse-resize' },
+]
+
+function mountHandles(): void {
+  for (const h of HANDLES) {
+    const d = document.createElement('div')
+    d.setAttribute('style',
+      `position:absolute;width:9px;height:9px;background:#fff;border:1.5px solid #0d99ff;border-radius:2px;pointer-events:auto;cursor:${h.cur};` +
+      `left:calc(${h.x * 100}% - 5px);top:calc(${h.y * 100}% - 5px)`)
+    d.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, 'resize', h.id), true)
+    selBox.appendChild(d)
   }
+  // 회전 손잡이 — 위에 떠 있는 동그라미 (PPT 와 같은 자리)
+  const rot = document.createElement('div')
+  rot.setAttribute('style', 'position:absolute;width:11px;height:11px;border-radius:50%;background:#fff;border:1.5px solid #0d99ff;pointer-events:auto;cursor:grab;left:calc(50% - 6px);top:-26px')
+  rot.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, 'rotate', 'rotate'), true)
+  selBox.appendChild(rot)
 }
 
 function place(box: HTMLDivElement, r: DOMRect): void {
@@ -157,8 +181,20 @@ function repaint(): void {
   } else { hoverBox.style.display = 'none'; hoverTip.style.display = 'none' }
   if (selected && selected.isConnected) {
     const r = selected.getBoundingClientRect()
-    place(selBox, r)
-    placeTip(selTip, r, `${Math.round(r.width)} × ${Math.round(r.height)}`)
+    // 🔴 회전했으면 선택 상자도 «같이» 기울여야 한다. getBoundingClientRect 는 축에 정렬된 큰 사각형을 주므로
+    //    그대로 쓰면 기운 글자 주위에 헐렁한 상자가 뜬다 (PPT 는 상자가 같이 돈다).
+    //    회전 «전» 크기는 offsetWidth/Height 고, 중심은 두 경우 모두 같다.
+    const el = selected as HTMLElement
+    const rot = xformOf(el).rot
+    const w = el.offsetWidth || r.width, h = el.offsetHeight || r.height
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+    selBox.style.display = 'block'
+    selBox.style.left = `${cx - w / 2}px`; selBox.style.top = `${cy - h / 2}px`
+    selBox.style.width = `${w}px`; selBox.style.height = `${h}px`
+    selBox.style.transform = rot ? `rotate(${+rot.toFixed(1)}deg)` : ''
+    // 손잡이는 «손으로 만지기»가 켜졌을 때만 보인다 — 꺼져 있으면 선택 테두리만 남는다
+    for (const hd of Array.from(selBox.children) as HTMLElement[]) hd.style.display = handDrag ? 'block' : 'none'
+    placeTip(selTip, r, `${Math.round(w)} × ${Math.round(h)}${rot ? ` · ${Math.round(rot)}°` : ''}`)
     selTip.style.top = r.bottom + 4 + 'px'
     selTip.style.left = r.left + r.width / 2 - selTip.offsetWidth / 2 + 'px'
     paintBoxModel(selected)
@@ -260,6 +296,212 @@ function tree(el: Element, depth: number): TreeNode | null {
   return node
 }
 
+/* ---------- 손으로 옮기고 키우기 (PPT·포토샵의 그 손) ---------- */
+
+/**
+ * 🔴 웹은 흐름 레이아웃이라 «픽셀을 박는» 조작이 그대로는 코드가 되지 않는다.
+ *    그래서 드래그를 좌표가 아니라 «의미 있는 CSS» 로 번역한다:
+ *      이동 = transform: translate  (기본 — 흐름을 안 깨고 겹칠 수 있다. PPT 에 제일 가깝다)
+ *           = margin                (「밀기」 모드 — 주변이 실제로 밀려난다)
+ *      크기 = width / height
+ *      회전 = transform: rotate
+ *    셋 다 Tailwind 로 그대로 적힌다(`translate-x-[12px]`·`w-[320px]`·`rotate-[6deg]`).
+ *    `position:absolute` 를 박지 않는 게 이 설계의 전부다 — 그 순간 반응형이 죽는다.
+ */
+type MoveMode = 'translate' | 'margin'
+let moveMode: MoveMode = 'translate'
+let handDrag = true
+
+interface DragState {
+  kind: 'move' | 'resize' | 'rotate'
+  handle: string
+  el: HTMLElement
+  x0: number
+  y0: number
+  rect: DOMRect
+  start: { tx: number; ty: number; rot: number; w: number; h: number; ml: number; mt: number }
+  cx: number
+  cy: number
+  a0: number
+  moved: boolean
+}
+let drag: DragState | null = null
+let justDragged = false
+
+function xformOf(el: Element): { tx: number; ty: number; rot: number } {
+  const t = getComputedStyle(el).transform
+  if (!t || t === 'none') return { tx: 0, ty: 0, rot: 0 }
+  try {
+    const m = new DOMMatrixReadOnly(t)
+    return { tx: m.e, ty: m.f, rot: Math.atan2(m.b, m.a) * 180 / Math.PI }
+  } catch { return { tx: 0, ty: 0, rot: 0 } }
+}
+
+function applyXform(el: HTMLElement, tx: number, ty: number, rot: number): void {
+  const parts: string[] = []
+  if (tx || ty) parts.push(`translate(${Math.round(tx)}px, ${Math.round(ty)}px)`)
+  if (rot) parts.push(`rotate(${+rot.toFixed(1)}deg)`)
+  el.style.setProperty('transform', parts.join(' ') || 'none', 'important')
+}
+
+function startDrag(e: PointerEvent, kind: DragState['kind'], handle: string): void {
+  if (!selected || !handDrag) return
+  e.preventDefault(); e.stopPropagation()
+  const el = selected as HTMLElement
+  const r = el.getBoundingClientRect()
+  const cs = getComputedStyle(el)
+  const x = xformOf(el)
+  drag = {
+    kind, handle, el, x0: e.clientX, y0: e.clientY, rect: r,
+    start: { tx: x.tx, ty: x.ty, rot: x.rot, w: r.width, h: r.height, ml: px(cs.marginLeft), mt: px(cs.marginTop) },
+    cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+    a0: Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)) * 180 / Math.PI,
+    moved: false,
+  }
+  document.body.style.userSelect = 'none'
+}
+
+/** 부모·형제의 가장자리에 붙인다 (피그마의 스마트 가이드). Alt 로 끈다. */
+function snap(v: number, cands: number[], alt: boolean): { v: number; hit: number | null } {
+  if (alt) return { v, hit: null }
+  for (const c of cands) if (Math.abs(v - c) <= 4) return { v: c, hit: c }
+  return { v: Math.round(v / 8) * 8, hit: null } // 붙을 게 없으면 8px 격자
+}
+
+function edgesAround(el: Element): { xs: number[]; ys: number[] } {
+  const xs: number[] = [], ys: number[] = []
+  const p = el.parentElement
+  if (p) {
+    const r = p.getBoundingClientRect()
+    const cs = getComputedStyle(p)
+    xs.push(r.left + px(cs.paddingLeft), r.right - px(cs.paddingRight), r.left + r.width / 2)
+    ys.push(r.top + px(cs.paddingTop), r.bottom - px(cs.paddingBottom), r.top + r.height / 2)
+    for (const sib of Array.from(p.children)) {
+      if (sib === el || SKIP_TAGS.has(sib.tagName)) continue
+      const s = sib.getBoundingClientRect()
+      if (s.width < 1 && s.height < 1) continue
+      xs.push(s.left, s.right, s.left + s.width / 2)
+      ys.push(s.top, s.bottom, s.top + s.height / 2)
+    }
+  }
+  return { xs, ys }
+}
+
+function paintSnap(lines: { x?: number; y?: number }[]): void {
+  snapLayer.innerHTML = ''
+  if (!lines.length) { snapLayer.style.display = 'none'; return }
+  snapLayer.style.display = 'block'
+  for (const l of lines) {
+    const d = document.createElement('div')
+    d.setAttribute('style', l.x != null
+      ? `position:absolute;left:${l.x}px;top:0;width:1px;height:100%;background:#f24822`
+      : `position:absolute;left:0;top:${l.y}px;width:100%;height:1px;background:#f24822`)
+    snapLayer.appendChild(d)
+  }
+}
+
+function onDragMove(e: PointerEvent): void {
+  if (!drag) return
+  e.preventDefault()
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0
+  if (!drag.moved && Math.hypot(dx, dy) < 3) return
+  drag.moved = true
+  const { el, start } = drag
+  const alt = e.altKey
+
+  if (drag.kind === 'rotate') {
+    const a = Math.atan2(e.clientY - drag.cy, e.clientX - drag.cx) * 180 / Math.PI
+    let rot = start.rot + (a - drag.a0)
+    if (e.shiftKey) rot = Math.round(rot / 15) * 15   // Shift = 15도 단위 (PPT 와 같다)
+    applyXform(el, start.tx, start.ty, rot)
+  } else if (drag.kind === 'move') {
+    const { xs, ys } = edgesAround(el)
+    const lines: { x?: number; y?: number }[] = []
+    const sx = snap(drag.rect.left + dx, xs, alt); const sy = snap(drag.rect.top + dy, ys, alt)
+    if (sx.hit != null) lines.push({ x: sx.hit })
+    if (sy.hit != null) lines.push({ y: sy.hit })
+    paintSnap(lines)
+    const mx = sx.v - drag.rect.left, my = sy.v - drag.rect.top
+    if (moveMode === 'margin') {
+      el.style.setProperty('margin-left', `${Math.round(start.ml + mx)}px`, 'important')
+      el.style.setProperty('margin-top', `${Math.round(start.mt + my)}px`, 'important')
+    } else {
+      applyXform(el, start.tx + mx, start.ty + my, start.rot)
+    }
+  } else {
+    // 크기: 끄는 변만 움직이고 반대쪽은 제자리에 둔다 (PPT 처럼) — 웹은 왼쪽·위가 고정이라 translate 로 보정한다
+    const h = drag.handle
+    let w = start.w, ht = start.h, tx = start.tx, ty = start.ty
+    if (h.includes('e')) w = start.w + dx
+    if (h.includes('w')) { w = start.w - dx; tx = start.tx + dx }
+    if (h.includes('s')) ht = start.h + dy
+    if (h.includes('n')) { ht = start.h - dy; ty = start.ty + dy }
+    if (e.shiftKey && h.length === 2) {   // 모서리 + Shift = 비율 유지
+      const k = start.h / start.w
+      ht = Math.round(w * k)
+      if (h.includes('n')) ty = start.ty + (start.h - ht)
+    }
+    w = Math.max(8, Math.round(w / (alt ? 1 : 8)) * (alt ? 1 : 8))
+    ht = Math.max(8, Math.round(ht / (alt ? 1 : 8)) * (alt ? 1 : 8))
+    if (h !== 'n' && h !== 's') el.style.setProperty('width', `${w}px`, 'important')
+    if (h !== 'e' && h !== 'w') el.style.setProperty('height', `${ht}px`, 'important')
+    applyXform(el, tx, ty, start.rot)
+  }
+  repaint()
+}
+
+function endDrag(): void {
+  if (!drag) return
+  const d = drag
+  drag = null
+  document.body.style.userSelect = ''
+  paintSnap([])
+  if (!d.moved) return
+  justDragged = true
+  setTimeout(() => { justDragged = false }, 0)
+  postXform(d.el, d.kind)
+}
+
+/** 손으로 만든 결과를 «바꿀 값 목록»으로 호스트에 넘긴다 — 「코드에 적용」이 이걸 먹는다. */
+function postXform(el: HTMLElement, kind: DragState['kind']): void {
+  const x = xformOf(el)
+  const r = el.getBoundingClientRect()
+  const changes: { prop: string; value: string }[] = []
+  if (kind === 'resize') {
+    if (el.style.width) changes.push({ prop: 'width', value: `${Math.round(r.width)}px` })
+    if (el.style.height) changes.push({ prop: 'height', value: `${Math.round(r.height)}px` })
+  }
+  if (kind === 'move' && moveMode === 'margin') {
+    const cs = getComputedStyle(el)
+    changes.push({ prop: 'margin-left', value: `${Math.round(px(cs.marginLeft))}px` })
+    changes.push({ prop: 'margin-top', value: `${Math.round(px(cs.marginTop))}px` })
+  }
+  if (Math.abs(x.tx) > 0.5 || Math.abs(x.ty) > 0.5 || el.style.transform.includes('translate')) {
+    changes.push({ prop: 'translate-x', value: `${Math.round(x.tx)}px` })
+    changes.push({ prop: 'translate-y', value: `${Math.round(x.ty)}px` })
+  }
+  if (Math.abs(x.rot) > 0.05 || el.style.transform.includes('rotate')) {
+    changes.push({ prop: 'rotate', value: `${+x.rot.toFixed(1)}deg` })
+  }
+  post({ type: 'xform', kind, changes, info: describe(el) })
+}
+
+/** 방향키로 1px·10px 씩 밀기 (PPT 와 같다). Alt+방향키는 트리 이동으로 남겨 둔다. */
+function nudge(dx: number, dy: number): void {
+  if (!selected) return
+  const el = selected as HTMLElement
+  if (moveMode === 'margin') {
+    const cs = getComputedStyle(el)
+    el.style.setProperty('margin-left', `${Math.round(px(cs.marginLeft) + dx)}px`, 'important')
+    el.style.setProperty('margin-top', `${Math.round(px(cs.marginTop) + dy)}px`, 'important')
+  } else {
+    const x = xformOf(el)
+    applyXform(el, x.tx + dx, x.ty + dy, x.rot)
+  }
+  repaint()
+  postXform(el, 'move')
+}
+
 /* ---------- 이벤트 ---------- */
 const post = (msg: Record<string, unknown>): void => ipcRenderer.sendToHost('hm', msg)
 
@@ -287,6 +529,7 @@ function bind(): void {
   document.addEventListener('click', (e) => {
     if (!selectMode && !e.ctrlKey && !e.metaKey) return
     e.preventDefault(); e.stopPropagation()
+    if (justDragged) return                       // 끌어 놓은 것은 «클릭»이 아니다
     const el = pick(e.clientX, e.clientY)
     if (!el) return select(null)
     // 같은 걸 다시 누르면 부모로 (피그마의 Shift+Enter)
@@ -294,12 +537,29 @@ function bind(): void {
     select(el)
   }, true)
   document.addEventListener('mousedown', (e) => { if (selectMode) { e.preventDefault(); e.stopPropagation() } }, true)
+  // 선택한 것 «위»를 누르고 끌면 이동 — 손잡이는 각자 자기 리스너가 먼저 잡는다
+  document.addEventListener('pointerdown', (e) => {
+    if (!selectMode || !handDrag || drag || !selected) return
+    const hit = pick(e.clientX, e.clientY)
+    if (!hit || !(selected === hit || selected.contains(hit))) return
+    startDrag(e, 'move', 'body')
+  }, true)
+  document.addEventListener('pointermove', onDragMove, true)
+  document.addEventListener('pointerup', endDrag, true)
+  document.addEventListener('pointercancel', endDrag, true)
   document.addEventListener('dblclick', (e) => { if (selectMode) { e.preventDefault(); e.stopPropagation() } }, true)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Alt') { altDown = true; repaint(); e.preventDefault() }
     if (!selectMode) return
     if (e.key === 'Escape') { select(null); return }
     if (!selected) return
+    // 방향키 = 1px 밀기 (Shift 10px). 트리 이동은 Alt+방향키 — PPT 를 따랐다.
+    if (handDrag && !e.altKey && e.key.startsWith('Arrow')) {
+      const k = e.shiftKey ? 10 : 1
+      const d: Record<string, [number, number]> = { ArrowLeft: [-k, 0], ArrowRight: [k, 0], ArrowUp: [0, -k], ArrowDown: [0, k] }
+      const v = d[e.key]
+      if (v) { e.preventDefault(); nudge(v[0], v[1]); return }
+    }
     if (e.key === 'ArrowUp' && selected.parentElement && selected.parentElement !== document.body) { e.preventDefault(); select(selected.parentElement, 'key') }
     if (e.key === 'ArrowDown' && selected.firstElementChild) { e.preventDefault(); select(selected.firstElementChild, 'key') }
     if (e.key === 'ArrowLeft' && selected.previousElementSibling) { e.preventDefault(); select(selected.previousElementSibling, 'key') }
@@ -324,6 +584,8 @@ function bind(): void {
   ipcRenderer.on('hm', (_e, msg: any) => {
     switch (msg.type) {
       case 'mode': selectMode = !!msg.on; if (!selectMode) { hovered = null; repaint() } break
+      case 'hand': handDrag = !!msg.on; moveMode = (msg.moveMode as MoveMode) ?? moveMode; repaint(); break
+      case 'nudge': nudge(Number(msg.dx) || 0, Number(msg.dy) || 0); break
       case 'select': { const el = elOf(msg.hmId); if (el) { el.scrollIntoView({ block: 'nearest' }); select(el, 'panel') } break }
       case 'clear': select(null); break
       case 'highlight': { hovered = elOf(msg.hmId); repaint(); break }
